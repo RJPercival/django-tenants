@@ -49,7 +49,7 @@ class TenantMixin(models.Model):
     Leave this as None. Stores the subfolder in subfolder routing was used
     """
 
-    _previous_tenant = []
+    _previous_tenant = {}
 
     class Meta:
         abstract = True
@@ -66,16 +66,26 @@ class TenantMixin(models.Model):
                 # run some code in tenant test
             # run some code in previous tenant (public probably)
         """
-        connection = connections[get_tenant_database_alias()]
-        self._previous_tenant.append(connection.tenant)
-        self.activate()
+        # Save previous tenant for each database
+        for db_alias in get_tenant_database_aliases():
+            if db_alias not in self._previous_tenant:
+                self._previous_tenant[db_alias] = []
+            conn = connections[db_alias]
+            self._previous_tenant[db_alias].append(conn.tenant)
 
+        self.activate()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        connection = connections[get_tenant_database_alias()]
-
-        connection.set_tenant(self._previous_tenant.pop())
+        # Restore previous tenant for each database
+        for db_alias in get_tenant_database_aliases():
+            if db_alias in self._previous_tenant and self._previous_tenant[db_alias]:
+                previous = self._previous_tenant[db_alias].pop()
+                conn = connections[db_alias]
+                if previous is None:
+                    conn.set_schema_to_public()
+                else:
+                    conn.set_tenant(previous)
 
     def activate(self):
         """

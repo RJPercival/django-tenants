@@ -977,3 +977,79 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
 
         # Default connection should be on public schema
         self.assertEqual(connection.schema_name, get_public_schema_name())
+
+    def test_context_manager_restores_all_databases(self):
+        """
+        Should restore previous tenant on all databases when exiting context.
+
+        When used as a context manager, entering should save the previous
+        tenant for all databases, and exiting should restore them all.
+        """
+        from django_tenants.utils import get_tenant_database_aliases
+
+        # Start in public schema on all databases
+        get_tenant_model().deactivate()
+
+        # Verify all databases are on public schema
+        public_schema = get_public_schema_name()
+        tenant_dbs = get_tenant_database_aliases()
+        for db_alias in tenant_dbs:
+            self.assertEqual(connections[db_alias].schema_name, public_schema)
+
+        # Use tenant as context manager
+        with self.tenant:
+            # Inside context: all databases should have tenant schema
+            for db_alias in tenant_dbs:
+                self.assertEqual(connections[db_alias].schema_name, 'multidb_test',
+                               f"Database {db_alias} should have tenant schema inside context")
+
+        # Outside context: all databases should be back to public schema
+        for db_alias in tenant_dbs:
+            self.assertEqual(connections[db_alias].schema_name, public_schema,
+                           f"Database {db_alias} should be restored to public schema after context")
+
+    def test_context_manager_nested(self):
+        """
+        Should handle nested context managers correctly across all databases.
+
+        When context managers are nested, each exit should restore the
+        schema that was active when that context was entered.
+        """
+        from django_tenants.utils import get_tenant_database_aliases
+
+        # Create a second tenant for nesting
+        tenant2 = get_tenant_model()(schema_name='multidb_test2')
+        tenant2.save()
+        domain2 = get_tenant_domain_model()(tenant=tenant2, domain='multidb2.test.com')
+        domain2.save()
+
+        try:
+            tenant_dbs = get_tenant_database_aliases()
+            public_schema = get_public_schema_name()
+
+            # Start in public
+            get_tenant_model().deactivate()
+
+            # Outer context: tenant1
+            with self.tenant:
+                for db_alias in tenant_dbs:
+                    self.assertEqual(connections[db_alias].schema_name, 'multidb_test')
+
+                # Inner context: tenant2
+                with tenant2:
+                    for db_alias in tenant_dbs:
+                        self.assertEqual(connections[db_alias].schema_name, 'multidb_test2')
+
+                # Back to tenant1
+                for db_alias in tenant_dbs:
+                    self.assertEqual(connections[db_alias].schema_name, 'multidb_test')
+
+            # Back to public
+            for db_alias in tenant_dbs:
+                self.assertEqual(connections[db_alias].schema_name, public_schema)
+
+        finally:
+            # Cleanup
+            connection.set_schema_to_public()
+            domain2.delete()
+            tenant2.delete(force_drop=True)
