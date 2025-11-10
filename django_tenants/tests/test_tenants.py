@@ -935,3 +935,45 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         # Default connection should work as before
         self.assertEqual(connection.schema_name, 'multidb_test')
         self.assertEqual(connection.tenant, self.tenant)
+
+    def test_deactivate_sets_public_on_all_databases(self):
+        """
+        Should deactivate tenant schema on all databases with django-tenants engine.
+
+        When deactivate() is called, it should iterate through all databases
+        returned by get_tenant_database_aliases() and set the public schema
+        on each one.
+        """
+        from django_tenants.utils import get_tenant_database_aliases
+
+        # First activate the tenant
+        self.tenant.activate()
+
+        # Verify it's activated
+        tenant_dbs = get_tenant_database_aliases()
+        for db_alias in tenant_dbs:
+            self.assertEqual(connections[db_alias].schema_name, 'multidb_test')
+
+        # Deactivate the tenant
+        get_tenant_model().deactivate()
+
+        # Should have set the public schema on all tenant databases
+        public_schema = get_public_schema_name()
+        for db_alias in tenant_dbs:
+            conn = connections[db_alias]
+            self.assertEqual(conn.schema_name, public_schema,
+                           f"Database {db_alias} should have public schema set")
+
+    def test_deactivate_backward_compatibility(self):
+        """
+        Should work correctly maintaining backward compatibility.
+
+        The default connection should be set to public schema as before,
+        while also deactivating on additional databases.
+        """
+        # Activate then deactivate
+        self.tenant.activate()
+        get_tenant_model().deactivate()
+
+        # Default connection should be on public schema
+        self.assertEqual(connection.schema_name, get_public_schema_name())

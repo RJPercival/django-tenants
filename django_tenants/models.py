@@ -98,8 +98,9 @@ class TenantMixin(models.Model):
             # or simpler
             Tenant.deactivate()
         """
-        connection = connections[get_tenant_database_alias()]
-        connection.set_schema_to_public()
+        for db_alias in get_tenant_database_aliases():
+            connection = connections[db_alias]
+            connection.set_schema_to_public()
 
     def save(self, verbosity=1, *args, **kwargs):
         connection = connections[get_tenant_database_alias()]
