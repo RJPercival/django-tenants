@@ -7,7 +7,7 @@ from django.utils.module_loading import import_string
 from django.utils.deprecation import MiddlewareMixin
 
 from django_tenants.utils import remove_www, get_public_schema_name, get_tenant_types, \
-    has_multi_type_tenants, get_tenant_domain_model, get_public_schema_urlconf
+    has_multi_type_tenants, get_tenant_domain_model, get_public_schema_urlconf, get_tenant_model
 
 
 class TenantMainMiddleware(MiddlewareMixin):
@@ -33,7 +33,7 @@ class TenantMainMiddleware(MiddlewareMixin):
         # Connection needs first to be at the public schema, as this is where
         # the tenant metadata is stored.
 
-        connection.set_schema_to_public()
+        get_tenant_model().deactivate()
         try:
             hostname = self.hostname_from_request(request)
         except DisallowedHost:
@@ -49,7 +49,7 @@ class TenantMainMiddleware(MiddlewareMixin):
 
         tenant.domain_url = hostname
         request.tenant = tenant
-        connection.set_tenant(request.tenant)
+        request.tenant.activate()
         self.setup_url_routing(request)
 
     def no_tenant_found(self, request, hostname):

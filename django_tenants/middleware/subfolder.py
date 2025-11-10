@@ -36,7 +36,7 @@ class TenantSubfolderMiddleware(TenantMainMiddleware):
         if hasattr(request, "tenant"):
             return
 
-        connection.set_schema_to_public()
+        get_tenant_model().deactivate()
 
         urlconf = None
 
@@ -69,7 +69,7 @@ class TenantSubfolderMiddleware(TenantMainMiddleware):
         tenant.domain_url = hostname
         request.tenant = tenant
 
-        connection.set_tenant(request.tenant)
+        request.tenant.activate()
         clear_url_caches()  # Required to remove previous tenant prefix from cache, if present
 
         if urlconf:
