@@ -65,12 +65,12 @@ class GetTenantDatabaseAliasesTestCase(TenantTestCase):
     a list containing the single result from get_tenant_database_alias().
     """
 
-    def test_returns_list_with_single_database_alias(self):
+    def test_returns_list_with_database_aliases(self):
         """
-        Should return a list containing the result of get_tenant_database_alias().
+        Should return a list containing all tenant database aliases.
 
-        In the pre-refactor version, this enables multi-database code patterns
-        while maintaining single-database behavior.
+        After Phase 5, the test settings include multiple databases
+        (default, replica, other), so this verifies the function detects them all.
         """
         from django_tenants.utils import get_tenant_database_aliases
 
@@ -79,12 +79,18 @@ class GetTenantDatabaseAliasesTestCase(TenantTestCase):
         # Should return a list
         self.assertIsInstance(result, list)
 
-        # Should contain exactly one element
-        self.assertEqual(len(result), 1)
+        # Should contain multiple elements (we have 3 in test settings)
+        self.assertGreaterEqual(len(result), 1)
 
-        # Should match the result of get_tenant_database_alias()
+        # Should include the default database
         expected = get_tenant_database_alias()
-        self.assertEqual(result[0], expected)
+        self.assertIn(expected, result)
+
+        # In test settings, should have all three tenant databases
+        self.assertEqual(len(result), 3)
+        self.assertIn('default', result)
+        self.assertIn('replica', result)
+        self.assertIn('other', result)
 
     def test_result_is_cached(self):
         """
