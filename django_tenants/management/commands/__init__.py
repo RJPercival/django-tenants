@@ -51,7 +51,7 @@ class BaseTenantCommand(BaseCommand):
                   self.style.SQL_TABLE(tenant.schema_name) +
                   self.style.NOTICE("' then calling %s:" % command_name))
 
-        connection.set_tenant(tenant)
+        tenant.activate()
 
         # call the original command with the args it knows
         call_command(command_name, *args, **options)
@@ -64,7 +64,7 @@ class BaseTenantCommand(BaseCommand):
             # options schema_name can override inherited schema_name
             schema_name = options['schema_name'] or self.schema_name
             # only run on a particular schema
-            connection.set_schema_to_public()
+            get_tenant_model().deactivate()
             self.execute_command(get_tenant_model().objects.get(schema_name=schema_name), self.COMMAND_NAME,
                                  *args, **options)
         else:
@@ -127,7 +127,7 @@ class TenantWrappedCommand(InteractiveTenantOption, BaseCommand):
 
     def handle(self, *args, **options):
         tenant = self.get_tenant_from_options_or_interactive(**options)
-        connection.set_tenant(tenant)
+        tenant.activate()
 
         self.command_instance.execute(*args, **options)
 

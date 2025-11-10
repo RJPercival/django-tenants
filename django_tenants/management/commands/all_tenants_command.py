@@ -51,6 +51,6 @@ class Command(BaseCommand):
             tenants = tenants.exclude(schema_name=get_public_schema_name())
         for tenant in tenants:
             self.stdout.write("Applying command to: %s" % tenant.schema_name)
-            connection.set_tenant(tenant)
+            tenant.activate()
             klass.run_from_argv(args)
 

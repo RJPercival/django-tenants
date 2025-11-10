@@ -44,12 +44,12 @@ class Command(InteractiveTenantOption, BaseCommand):
         schema_namespace, args = schema_parser.parse_known_args(argv)
 
         tenant = self.get_tenant_from_options_or_interactive(schema_name=schema_namespace.schema_name)
-        connection.set_tenant(tenant)
+        tenant.activate()
         klass.run_from_argv(args)
 
     def handle(self, *args, **options):
         tenant = self.get_tenant_from_options_or_interactive(**options)
-        connection.set_tenant(tenant)
+        tenant.activate()
         options.pop('schema_name', None)
 
         # options come including {"command_name": ["x", "y"], "command_options": ["--w=1", "--z=2"]}
