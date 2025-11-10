@@ -34,17 +34,23 @@ def get_tenant_database_aliases():
     """
     Returns a list of all database aliases that should host tenant schemas.
 
-    In the pre-refactor version, this simply returns a list containing the
-    single database alias from get_tenant_database_alias(). This enables
-    multi-database code patterns while maintaining single-database behavior.
-
-    In the future multi-database implementation, this will scan settings.DATABASES
-    for all databases using the django-tenants engine.
+    Scans settings.DATABASES for all databases using the django-tenants engine
+    (django_tenants.postgresql_backend). This enables multi-database support
+    where tenant schemas can exist across multiple databases.
 
     Returns:
-        list: A list of database alias strings
+        list: A list of database alias strings for databases using django-tenants engine
     """
-    return [get_tenant_database_alias()]
+    from django.conf import settings
+
+    tenant_databases = []
+
+    for alias, db_config in settings.DATABASES.items():
+        engine = db_config.get('ENGINE', '')
+        if engine == 'django_tenants.postgresql_backend':
+            tenant_databases.append(alias)
+
+    return tenant_databases
 
 
 def get_public_schema_name():
