@@ -854,6 +854,9 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
     multiple databases are configured with the django-tenants engine.
     """
 
+    # Allow tests to use all tenant databases
+    databases = {'default', 'replica', 'other'}
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -1053,3 +1056,37 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
             connection.set_schema_to_public()
             domain2.delete()
             tenant2.delete(force_drop=True)
+
+    def test_create_schema_on_all_databases(self):
+        """
+        Should create tenant schema on all databases with django-tenants engine.
+
+        When create_schema() is called, it should create the schema on all
+        databases returned by get_tenant_database_aliases().
+        """
+        from django_tenants.utils import get_tenant_database_aliases, schema_exists
+
+        # Create a new tenant (don't let auto_create_schema run)
+        tenant = get_tenant_model()(schema_name='schema_create_test')
+        tenant.auto_create_schema = False
+        tenant.save()
+
+        try:
+            # Verify schema doesn't exist yet on any database
+            tenant_dbs = get_tenant_database_aliases()
+            for db_alias in tenant_dbs:
+                self.assertFalse(schema_exists('schema_create_test', database=db_alias),
+                               f"Schema should not exist on {db_alias} yet")
+
+            # Create schema (with sync_schema=True to actually create it)
+            tenant.create_schema(check_if_exists=False, sync_schema=True, verbosity=0)
+
+            # Verify schema exists on all tenant databases
+            for db_alias in tenant_dbs:
+                self.assertTrue(schema_exists('schema_create_test', database=db_alias),
+                              f"Schema should exist on {db_alias} after create_schema()")
+
+        finally:
+            # Cleanup
+            connection.set_schema_to_public()
+            tenant.delete(force_drop=True)

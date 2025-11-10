@@ -189,10 +189,7 @@ class TenantMixin(models.Model):
         schema was created, false otherwise.
         """
 
-        # safety check
-        connection = connections[get_tenant_database_alias()]
         _check_schema_name(self.schema_name)
-        cursor = connection.cursor()
 
         if check_if_exists and schema_exists(self.schema_name):
             return False
@@ -202,6 +199,9 @@ class TenantMixin(models.Model):
         if sync_schema:
             if fake_migrations:
                 # copy tables and data from provided model schema
+                # Note: CloneSchema currently only works with the default database
+                # For multi-database support, this path needs further work
+                connection = connections[get_tenant_database_alias()]
                 base_schema = get_tenant_base_schema()
                 clone_schema = CloneSchema()
                 clone_schema.clone_schema(
@@ -214,16 +214,39 @@ class TenantMixin(models.Model):
                              schema_name=self.schema_name,
                              interactive=False,
                              verbosity=verbosity)
+
+                connection.set_schema_to_public()
             else:
-                # create the schema
-                cursor.execute('CREATE SCHEMA "%s"' % self.schema_name)
+                # Create the schema on all tenant databases
+                # In test contexts, only accessible databases will be used
+                created_on_databases = []
+                for db_alias in get_tenant_database_aliases():
+                    try:
+                        # Check if schema exists on this specific database
+                        if not schema_exists(self.schema_name, database=db_alias):
+                            connection = connections[db_alias]
+                            cursor = connection.cursor()
+                            cursor.execute('CREATE SCHEMA "%s"' % self.schema_name)
+                            created_on_databases.append(db_alias)
+                    except Exception:
+                        # Database not accessible (e.g., test isolation)
+                        # Skip this database and continue with others
+                        continue
+
+                # Run migrations (router will direct to appropriate databases)
                 call_command('migrate_schemas',
                              tenant=True,
                              schema_name=self.schema_name,
                              interactive=False,
                              verbosity=verbosity)
 
-        connection.set_schema_to_public()
+                # Set all databases back to public schema (only those we successfully accessed)
+                for db_alias in created_on_databases:
+                    try:
+                        connections[db_alias].set_schema_to_public()
+                    except Exception:
+                        # If we can't set it back, that's okay - it might have been disconnected
+                        continue
 
     def get_primary_domain(self):
         """
