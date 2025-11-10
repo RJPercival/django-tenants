@@ -29,6 +29,24 @@ def get_tenant_database_alias():
     return getattr(settings, 'TENANT_DB_ALIAS', DEFAULT_DB_ALIAS)
 
 
+@lru_cache(maxsize=1)
+def get_tenant_database_aliases():
+    """
+    Returns a list of all database aliases that should host tenant schemas.
+
+    In the pre-refactor version, this simply returns a list containing the
+    single database alias from get_tenant_database_alias(). This enables
+    multi-database code patterns while maintaining single-database behavior.
+
+    In the future multi-database implementation, this will scan settings.DATABASES
+    for all databases using the django-tenants engine.
+
+    Returns:
+        list: A list of database alias strings
+    """
+    return [get_tenant_database_alias()]
+
+
 def get_public_schema_name():
     return getattr(settings, 'PUBLIC_SCHEMA_NAME', 'public')
 
