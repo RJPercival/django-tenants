@@ -88,7 +88,28 @@ DATABASES = {
         'PASSWORD': os.environ.get('DATABASE_PASSWORD', 'root'),
         'HOST': os.environ.get('DATABASE_HOST', 'localhost'),
         'PORT': os.environ.get('DATABASE_PORT', 5432),
-    }
+    },
+    'replica': {
+        # Read replica - same database as default (for testing)
+        'ENGINE': 'django_tenants.postgresql_backend',
+        'NAME': os.environ.get('DATABASE_DB', 'dts_test_project'),
+        'USER': os.environ.get('DATABASE_USER', 'postgres'),
+        'PASSWORD': os.environ.get('DATABASE_PASSWORD', 'root'),
+        'HOST': os.environ.get('DATABASE_HOST', 'localhost'),
+        'PORT': os.environ.get('DATABASE_PORT', 5432),
+        'TEST': {
+            'MIRROR': 'default',  # In tests, use the same test database as default
+        },
+    },
+    'other': {
+        # Distinct database for tenant data
+        'ENGINE': 'django_tenants.postgresql_backend',
+        'NAME': os.environ.get('DATABASE_DB_OTHER', 'dts_test_project_other'),
+        'USER': os.environ.get('DATABASE_USER', 'postgres'),
+        'PASSWORD': os.environ.get('DATABASE_PASSWORD', 'root'),
+        'HOST': os.environ.get('DATABASE_HOST', 'localhost'),
+        'PORT': os.environ.get('DATABASE_PORT', 5432),
+    },
 }
 
 DATABASE_ROUTERS = (
