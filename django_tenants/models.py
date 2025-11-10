@@ -155,36 +155,23 @@ class TenantMixin(models.Model):
 
     def _drop_schema(self, force_drop=False):
         """ Drops the schema from all tenant databases"""
-        from django.db.utils import OperationalError
-
         # Verify we're in a safe context on all databases before dropping
         for db_alias in get_tenant_database_aliases():
-            try:
-                connection = connections[db_alias]
-                has_schema = hasattr(connection, 'schema_name')
-                if has_schema and connection.schema_name not in (self.schema_name, get_public_schema_name()):
-                    raise Exception("Can't delete tenant outside it's own schema or "
-                                    "the public schema. Current schema is %s on database %s."
-                                    % (connection.schema_name, db_alias))
-            except (OperationalError, Exception) as e:
-                # Database not accessible (e.g., test isolation, DatabaseOperationForbidden)
-                # Skip this database and continue with others, but re-raise our safety Exception
-                if "Can't delete tenant" in str(e):
-                    raise
-                continue
+            connection = connections[db_alias]
+            has_schema = hasattr(connection, 'schema_name')
+            if has_schema and connection.schema_name not in (self.schema_name, get_public_schema_name()):
+                raise Exception("Can't delete tenant outside it's own schema or "
+                                "the public schema. Current schema is %s on database %s."
+                                % (connection.schema_name, db_alias))
 
         # Check if we should drop (based on first accessible database)
         should_drop = False
         for db_alias in get_tenant_database_aliases():
-            try:
-                connection = connections[db_alias]
-                has_schema = hasattr(connection, 'schema_name')
-                if has_schema and schema_exists(self.schema_name, database=db_alias) and (self.auto_drop_schema or force_drop):
-                    should_drop = True
-                    break
-            except (OperationalError, Exception):
-                # Database not accessible (test isolation) - skip it
-                continue
+            connection = connections[db_alias]
+            has_schema = hasattr(connection, 'schema_name')
+            if has_schema and schema_exists(self.schema_name, database=db_alias) and (self.auto_drop_schema or force_drop):
+                should_drop = True
+                break
 
         if should_drop:
             # Call pre_drop hook once before dropping from any database
@@ -192,15 +179,10 @@ class TenantMixin(models.Model):
 
             # Drop schema from all tenant databases
             for db_alias in get_tenant_database_aliases():
-                try:
-                    connection = connections[db_alias]
-                    if schema_exists(self.schema_name, database=db_alias):
-                        cursor = connection.cursor()
-                        cursor.execute('DROP SCHEMA "%s" CASCADE' % self.schema_name)
-                except (OperationalError, Exception):
-                    # Database not accessible (e.g., test isolation)
-                    # Skip this database and continue with others
-                    continue
+                connection = connections[db_alias]
+                if schema_exists(self.schema_name, database=db_alias):
+                    cursor = connection.cursor()
+                    cursor.execute('DROP SCHEMA "%s" CASCADE' % self.schema_name)
 
     def pre_drop(self):
         """
@@ -253,20 +235,12 @@ class TenantMixin(models.Model):
                 connection.set_schema_to_public()
             else:
                 # Create the schema on all tenant databases
-                # In test contexts, only accessible databases will be used
-                created_on_databases = []
                 for db_alias in get_tenant_database_aliases():
-                    try:
-                        # Check if schema exists on this specific database
-                        if not schema_exists(self.schema_name, database=db_alias):
-                            connection = connections[db_alias]
-                            cursor = connection.cursor()
-                            cursor.execute('CREATE SCHEMA "%s"' % self.schema_name)
-                            created_on_databases.append(db_alias)
-                    except Exception:
-                        # Database not accessible (e.g., test isolation)
-                        # Skip this database and continue with others
-                        continue
+                    # Check if schema exists on this specific database
+                    if not schema_exists(self.schema_name, database=db_alias):
+                        connection = connections[db_alias]
+                        cursor = connection.cursor()
+                        cursor.execute('CREATE SCHEMA "%s"' % self.schema_name)
 
                 # Run migrations (router will direct to appropriate databases)
                 call_command('migrate_schemas',
@@ -275,13 +249,9 @@ class TenantMixin(models.Model):
                              interactive=False,
                              verbosity=verbosity)
 
-                # Set all databases back to public schema (only those we successfully accessed)
-                for db_alias in created_on_databases:
-                    try:
-                        connections[db_alias].set_schema_to_public()
-                    except Exception:
-                        # If we can't set it back, that's okay - it might have been disconnected
-                        continue
+                # Set all databases back to public schema
+                for db_alias in get_tenant_database_aliases():
+                    connections[db_alias].set_schema_to_public()
 
     def get_primary_domain(self):
         """

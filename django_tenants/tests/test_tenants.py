@@ -852,10 +852,12 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
 
     Verifies that activate() and deactivate() work correctly when
     multiple databases are configured with the django-tenants engine.
+
+    Uses databases = '__all__' to access all configured tenant databases.
     """
 
-    # Allow tests to use all tenant databases
-    databases = {'default', 'replica', 'other'}
+    # Allow tests to access all configured databases
+    databases = '__all__'
 
     @classmethod
     def setUpClass(cls):

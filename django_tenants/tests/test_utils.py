@@ -69,8 +69,8 @@ class GetTenantDatabaseAliasesTestCase(TenantTestCase):
         """
         Should return a list containing all tenant database aliases.
 
-        After Phase 5, the test settings include multiple databases
-        (default, replica, other), so this verifies the function detects them all.
+        Test settings include multiple databases (default, replica, other)
+        for testing multi-database support.
         """
         from django_tenants.utils import get_tenant_database_aliases
 

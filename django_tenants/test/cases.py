@@ -6,6 +6,16 @@ from django_tenants.utils import get_tenant_model, get_tenant_domain_model, get_
 
 
 class TenantTestCase(TestCase):
+    """
+    Base test case for tests that create and work with tenants.
+
+    Uses databases = '__all__' because tenant creation/deletion is inherently
+    a multi-database operation in the django-tenants architecture.
+    """
+
+    # Tenant operations affect all configured tenant databases
+    databases = '__all__'
+
     tenant = None
     domain = None
 

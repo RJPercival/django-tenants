@@ -90,7 +90,7 @@ DATABASES = {
         'PORT': os.environ.get('DATABASE_PORT', 5432),
     },
     'replica': {
-        # Read replica - same database as default (for testing)
+        # Read replica - same database as default (for testing multi-database support)
         'ENGINE': 'django_tenants.postgresql_backend',
         'NAME': os.environ.get('DATABASE_DB', 'dts_test_project'),
         'USER': os.environ.get('DATABASE_USER', 'postgres'),
@@ -102,7 +102,7 @@ DATABASES = {
         },
     },
     'other': {
-        # Distinct database for tenant data
+        # Distinct database for tenant data (for testing multi-database support)
         'ENGINE': 'django_tenants.postgresql_backend',
         'NAME': os.environ.get('DATABASE_DB_OTHER', 'dts_test_project_other'),
         'USER': os.environ.get('DATABASE_USER', 'postgres'),

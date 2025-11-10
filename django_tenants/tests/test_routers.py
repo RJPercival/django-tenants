@@ -13,7 +13,12 @@ class MultiDatabaseRouterTestCase(BaseTestCase):
     Verifies that the router allows migrations on all databases configured
     with the django-tenants engine, not just the single database returned
     by get_tenant_database_alias().
+
+    Uses databases = '__all__' to access all configured tenant databases.
     """
+
+    # Allow tests to access all configured databases
+    databases = '__all__'
 
     @classmethod
     def setUpClass(cls):

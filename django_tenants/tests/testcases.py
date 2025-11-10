@@ -10,7 +10,13 @@ class BaseTestCase(TransactionTestCase):
     """
     Base test case that comes packed with overloaded INSTALLED_APPS,
     custom public tenant, and schemas cleanup on tearDown.
+
+    Uses databases = '__all__' because tenant creation/deletion is inherently
+    a multi-database operation in the django-tenants architecture.
     """
+
+    # Tenant operations affect all configured tenant databases
+    databases = '__all__'
 
     TENANT_APPS = ('dts_test_app',
                    'django.contrib.contenttypes',
