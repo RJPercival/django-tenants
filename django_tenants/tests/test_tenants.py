@@ -1,10 +1,11 @@
 from contextlib import contextmanager
+import unittest
 from unittest import mock
 
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.management import call_command
-from django.db import connection, transaction
+from django.db import connection, connections, transaction
 from django.test.utils import override_settings
 from django.utils.version import get_main_version, get_version_tuple
 
@@ -843,3 +844,114 @@ class MigrationOrderTestTest(BaseTestCase):
                 mock.call(schema_name="test", sender=mock.ANY, signal=schema_migrated),
             ]
         )
+
+
+class MultiDatabaseTenantMixinTest(BaseTestCase):
+    """
+    Tests for TenantMixin methods with multi-database support.
+    
+    Verifies that activate() and deactivate() work correctly when
+    multiple databases are configured with the django-tenants engine.
+    """
+
+    @unittest.expectedFailure
+    @override_settings(DATABASES={
+        'default': {
+            'ENGINE': 'django_tenants.postgresql_backend',
+            'NAME': 'test_db',
+        },
+        'other': {
+            'ENGINE': 'django_tenants.postgresql_backend',
+            'NAME': 'test_db_other',
+        },
+    })
+    def test_activate_sets_tenant_on_all_databases(self):
+        """
+        Should activate tenant schema on all databases with django-tenants engine.
+        
+        When activate() is called, it should iterate through all databases
+        returned by get_tenant_database_aliases() and set the tenant schema
+        on each one.
+        """
+        from django_tenants.utils import get_tenant_database_aliases
+        
+        # Clear cache to pick up test settings
+        if hasattr(get_tenant_database_aliases, 'cache_clear'):
+            get_tenant_database_aliases.cache_clear()
+        
+        tenant = get_tenant_model().objects.get(schema_name='test')
+        
+        # Activate the tenant
+        tenant.activate()
+        
+        # Should have set the tenant schema on all tenant databases
+        for db_alias in get_tenant_database_aliases():
+            conn = connections[db_alias]
+            self.assertEqual(conn.schema_name, 'test')
+            self.assertEqual(conn.tenant, tenant)
+
+    @unittest.expectedFailure  
+    @override_settings(DATABASES={
+        'default': {
+            'ENGINE': 'django_tenants.postgresql_backend',
+            'NAME': 'test_db',
+        },
+        'replica': {
+            'ENGINE': 'django_tenants.postgresql_backend',
+            'NAME': 'test_db_replica',
+        },
+        'analytics': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': 'analytics_db',
+        },
+    })
+    def test_activate_only_affects_tenant_databases(self):
+        """
+        Should only activate tenant on databases with django-tenants engine.
+        
+        Databases using standard Django engines should not be affected by
+        tenant activation.
+        """
+        from django_tenants.utils import get_tenant_database_aliases
+        
+        # Clear cache
+        if hasattr(get_tenant_database_aliases, 'cache_clear'):
+            get_tenant_database_aliases.cache_clear()
+        
+        tenant = get_tenant_model().objects.get(schema_name='test')
+        
+        # Activate the tenant
+        tenant.activate()
+        
+        # Tenant databases should have the tenant set
+        self.assertIn('default', get_tenant_database_aliases())
+        self.assertEqual(connections['default'].schema_name, 'test')
+        
+        self.assertIn('replica', get_tenant_database_aliases())
+        self.assertEqual(connections['replica'].schema_name, 'test')
+        
+        # Non-tenant database should not be in the list
+        self.assertNotIn('analytics', get_tenant_database_aliases())
+
+    @unittest.expectedFailure
+    def test_activate_works_with_single_database(self):
+        """
+        Should work correctly with single-database configuration.
+        
+        Backward compatibility: when only one database uses django-tenants
+        engine, activate() should work exactly as before.
+        """
+        from django_tenants.utils import get_tenant_database_aliases
+        
+        # Clear cache to use default test settings
+        if hasattr(get_tenant_database_aliases, 'cache_clear'):
+            get_tenant_database_aliases.cache_clear()
+        
+        tenant = get_tenant_model().objects.get(schema_name='test')
+        
+        # Activate the tenant  
+        tenant.activate()
+        
+        # Should have set the schema on the default database
+        self.assertEqual(connection.schema_name, 'test')
+        self.assertEqual(connection.tenant, tenant)

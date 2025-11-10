@@ -8,7 +8,8 @@ from django_tenants.clone import CloneSchema
 from .postgresql_backend.base import _check_schema_name
 from .signals import post_schema_sync, schema_needs_to_be_sync
 from .utils import get_creation_fakes_migrations, get_tenant_base_schema
-from .utils import schema_exists, get_tenant_domain_model, get_public_schema_name, get_tenant_database_alias
+from .utils import schema_exists, get_tenant_domain_model, get_public_schema_name, get_tenant_database_alias, \
+    get_tenant_database_aliases
 
 
 class TenantMixin(models.Model):
@@ -83,8 +84,9 @@ class TenantMixin(models.Model):
         Usage:
             Tenant.objects.get(schema_name='test').activate()
         """
-        connection = connections[get_tenant_database_alias()]
-        connection.set_tenant(self)
+        for db_alias in get_tenant_database_aliases():
+            connection = connections[db_alias]
+            connection.set_tenant(self)
 
     @classmethod
     def deactivate(cls):
