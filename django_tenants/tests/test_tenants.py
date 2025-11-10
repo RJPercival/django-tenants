@@ -1090,3 +1090,39 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
             # Cleanup
             connection.set_schema_to_public()
             tenant.delete(force_drop=True)
+
+    def test_drop_schema_from_all_databases(self):
+        """
+        Should drop tenant schema from all databases with django-tenants engine.
+
+        When _drop_schema() is called with force_drop=True, it should drop the
+        schema from all databases returned by get_tenant_database_aliases().
+        """
+        from django_tenants.utils import get_tenant_database_aliases, schema_exists
+
+        # Create a new tenant with schema on all databases
+        tenant = get_tenant_model()(schema_name='schema_drop_test')
+        tenant.save()
+
+        try:
+            # Verify schema exists on all tenant databases
+            tenant_dbs = get_tenant_database_aliases()
+            for db_alias in tenant_dbs:
+                self.assertTrue(schema_exists('schema_drop_test', database=db_alias),
+                              f"Schema should exist on {db_alias} before drop")
+
+            # Drop the schema from all databases
+            connection.set_schema_to_public()
+            tenant._drop_schema(force_drop=True)
+
+            # Verify schema no longer exists on any tenant database
+            for db_alias in tenant_dbs:
+                self.assertFalse(schema_exists('schema_drop_test', database=db_alias),
+                               f"Schema should not exist on {db_alias} after drop")
+
+        finally:
+            # Cleanup the tenant model itself (schema already dropped)
+            try:
+                super(get_tenant_model(), tenant).delete()
+            except Exception:
+                pass
