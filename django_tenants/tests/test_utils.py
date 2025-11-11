@@ -238,3 +238,141 @@ class MultiDatabaseDetectionTestCase(TenantTestCase):
         self.assertIn('default', result)
         self.assertIn('replica', result)
         self.assertNotIn('analytics', result)
+
+
+class SchemaExistsTestCase(TenantTestCase):
+    """
+    Tests for schema_exists() function with multi-database support.
+
+    The schema_exists() function should check if a schema exists on a specific
+    database, allowing per-database schema verification in multi-database setups.
+    """
+
+    def test_checks_schema_on_default_database_by_default(self):
+        """
+        Should check the default tenant database when no database parameter is provided.
+
+        When called without specifying a database, schema_exists() should use
+        the default tenant database (from get_tenant_database_alias()).
+        """
+        from django_tenants.utils import schema_exists
+
+        # The test tenant should exist on the default database
+        self.assertTrue(schema_exists(self.tenant.schema_name))
+
+        # A non-existent schema should return False
+        self.assertFalse(schema_exists('nonexistent_schema_12345'))
+
+    def test_checks_schema_on_specific_database(self):
+        """
+        Should check for schema existence on the specified database.
+
+        When the database parameter is provided, schema_exists() should check
+        the specified database for the schema.
+        """
+        from django_tenants.utils import schema_exists, get_tenant_database_aliases
+        from django.conf import settings
+
+        # Test across all tenant databases
+        for db_alias in get_tenant_database_aliases():
+            # Skip databases that are TEST.MIRROR - they share the same physical database
+            # as another alias, so they don't have their own separate schema creation
+            db_config = settings.DATABASES.get(db_alias, {})
+            if db_config.get('TEST', {}).get('MIRROR'):
+                # For mirrored databases, schema_exists should work because it queries
+                # the same physical database, but we skip explicit testing here since
+                # the mirrored database is tested via its parent
+                continue
+
+            # The test tenant should exist on non-mirrored databases
+            self.assertTrue(
+                schema_exists(self.tenant.schema_name, database=db_alias),
+                f"Test tenant schema should exist on {db_alias}"
+            )
+
+            # A non-existent schema should return False on all databases
+            self.assertFalse(
+                schema_exists('nonexistent_schema_12345', database=db_alias),
+                f"Non-existent schema should not exist on {db_alias}"
+            )
+
+    def test_returns_false_for_dropped_schema(self):
+        """
+        Should return False after a schema is dropped from a database.
+
+        After dropping a schema from a specific database, schema_exists()
+        should return False for that database.
+        """
+        from django_tenants.utils import schema_exists, get_tenant_database_aliases
+        from django.db import connections
+        from django.conf import settings
+
+        # Create a test schema on all non-mirrored databases
+        test_schema_name = 'test_dropped_schema'
+
+        # Only work with non-mirrored databases to avoid deadlocks
+        non_mirrored_dbs = []
+        for db_alias in get_tenant_database_aliases():
+            db_config = settings.DATABASES.get(db_alias, {})
+            if not db_config.get('TEST', {}).get('MIRROR'):
+                non_mirrored_dbs.append(db_alias)
+
+        for db_alias in non_mirrored_dbs:
+            cursor = connections[db_alias].cursor()
+            cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{test_schema_name}"')
+            cursor.close()
+
+        try:
+            # Verify schema exists on all non-mirrored databases
+            for db_alias in non_mirrored_dbs:
+                self.assertTrue(
+                    schema_exists(test_schema_name, database=db_alias),
+                    f"Schema should exist on {db_alias} before drop"
+                )
+
+            # Drop schema from all non-mirrored databases
+            for db_alias in non_mirrored_dbs:
+                cursor = connections[db_alias].cursor()
+                cursor.execute(f'DROP SCHEMA IF EXISTS "{test_schema_name}" CASCADE')
+                cursor.close()
+
+            # Verify schema no longer exists on any non-mirrored database
+            for db_alias in non_mirrored_dbs:
+                self.assertFalse(
+                    schema_exists(test_schema_name, database=db_alias),
+                    f"Schema should not exist on {db_alias} after drop"
+                )
+
+        finally:
+            # Cleanup: ensure schema is dropped
+            for db_alias in non_mirrored_dbs:
+                try:
+                    cursor = connections[db_alias].cursor()
+                    cursor.execute(f'DROP SCHEMA IF EXISTS "{test_schema_name}" CASCADE')
+                    cursor.close()
+                except Exception:
+                    pass
+
+    def test_case_insensitive_schema_check(self):
+        """
+        Should perform case-insensitive schema name checking.
+
+        PostgreSQL schema names are case-insensitive, so schema_exists()
+        should find schemas regardless of the case used in the query.
+        """
+        from django_tenants.utils import schema_exists
+
+        # Test with different case variations of the tenant schema name
+        schema_name = self.tenant.schema_name
+
+        # Should find schema with exact case
+        self.assertTrue(schema_exists(schema_name))
+
+        # Should find schema with uppercase
+        self.assertTrue(schema_exists(schema_name.upper()))
+
+        # Should find schema with lowercase
+        self.assertTrue(schema_exists(schema_name.lower()))
+
+        # Should find schema with mixed case
+        self.assertTrue(schema_exists(schema_name.title()))

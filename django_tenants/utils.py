@@ -214,7 +214,33 @@ def django_is_in_test_mode():
     return hasattr(mail, 'outbox')
 
 
-def schema_exists(schema_name, database=get_tenant_database_alias()):
+def schema_exists(schema_name: str, database: str = get_tenant_database_alias()) -> bool:
+    """
+    Check if a schema exists on a specific database.
+
+    This function queries the PostgreSQL system catalog to determine if a schema
+    with the given name exists on the specified database. The check is case-insensitive,
+    matching PostgreSQL's schema name handling.
+
+    Args:
+        schema_name: Name of the schema to check for existence
+        database: Database alias to check (defaults to the tenant database from settings)
+
+    Returns:
+        True if the schema exists on the specified database, False otherwise
+
+    Example:
+        >>> from django_tenants.utils import schema_exists
+        >>> # Check on default tenant database
+        >>> schema_exists('my_tenant')
+        True
+        >>> # Check on specific database
+        >>> schema_exists('my_tenant', database='replica')
+        True
+        >>> # Non-existent schema
+        >>> schema_exists('nonexistent')
+        False
+    """
     _connection = connections[database]
     cursor = _connection.cursor()
 
