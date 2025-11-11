@@ -179,25 +179,8 @@ class TenantMixin(models.Model):
         # (prevents self-deadlock when multiple aliases point to same database)
         processed_databases = set()
 
-        # Verify we're in a safe context on all databases before dropping
-        for db_alias in get_tenant_database_aliases():
-            connection = connections[db_alias]
-            db_key = _get_database_key(connection)
-
-            # Skip if we've already processed this physical database
-            if db_key in processed_databases:
-                continue
-            processed_databases.add(db_key)
-
-            has_schema = hasattr(connection, 'schema_name')
-            if has_schema and connection.schema_name not in (self.schema_name, get_public_schema_name()):
-                raise Exception("Can't delete tenant outside it's own schema or "
-                                "the public schema. Current schema is %s on database %s."
-                                % (connection.schema_name, db_alias))
-
         # Check if we should drop (based on first accessible database)
         should_drop = False
-        processed_databases.clear()  # Reset for next loop
 
         for db_alias in get_tenant_database_aliases():
             connection = connections[db_alias]
@@ -230,8 +213,17 @@ class TenantMixin(models.Model):
                 processed_databases.add(db_key)
 
                 if schema_exists(self.schema_name, database=db_alias):
-                    cursor = connection.cursor()
-                    cursor.execute('DROP SCHEMA "%s" CASCADE' % self.schema_name)
+                    # Drop the schema. PostgreSQL allows dropping from any schema context.
+                    # Use on_commit to ensure DROP happens after transaction commits,
+                    # avoiding "pending trigger events" errors in test environments
+                    def drop_schema():
+                        # Re-check schema exists since transaction might have been rolled back
+                        if schema_exists(self.schema_name, database=db_alias):
+                            cursor = connections[db_alias].cursor()
+                            cursor.execute('DROP SCHEMA "%s" CASCADE' % self.schema_name)
+
+                    from django.db import transaction
+                    transaction.on_commit(drop_schema, using=db_alias)
 
     def pre_drop(self):
         """
