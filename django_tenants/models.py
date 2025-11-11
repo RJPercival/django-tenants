@@ -12,6 +12,26 @@ from .utils import schema_exists, get_tenant_domain_model, get_public_schema_nam
     get_tenant_database_aliases
 
 
+def _get_database_key(connection):
+    """
+    Generate a unique identifier for a physical database based on connection settings.
+
+    Used to deduplicate operations when multiple database aliases point to the same
+    physical database (e.g., for read replicas).
+
+    Args:
+        connection: Django database connection
+
+    Returns:
+        tuple: (HOST, PORT, NAME) identifying the physical database
+    """
+    return (
+        connection.settings_dict.get('HOST', 'localhost'),
+        connection.settings_dict.get('PORT', 5432),
+        connection.settings_dict.get('NAME', '')
+    )
+
+
 class TenantMixin(models.Model):
     """
     All tenant models must inherit this class.
@@ -155,9 +175,20 @@ class TenantMixin(models.Model):
 
     def _drop_schema(self, force_drop=False):
         """ Drops the schema from all tenant databases"""
+        # Track unique physical databases to avoid duplicate operations
+        # (prevents self-deadlock when multiple aliases point to same database)
+        processed_databases = set()
+
         # Verify we're in a safe context on all databases before dropping
         for db_alias in get_tenant_database_aliases():
             connection = connections[db_alias]
+            db_key = _get_database_key(connection)
+
+            # Skip if we've already processed this physical database
+            if db_key in processed_databases:
+                continue
+            processed_databases.add(db_key)
+
             has_schema = hasattr(connection, 'schema_name')
             if has_schema and connection.schema_name not in (self.schema_name, get_public_schema_name()):
                 raise Exception("Can't delete tenant outside it's own schema or "
@@ -166,8 +197,17 @@ class TenantMixin(models.Model):
 
         # Check if we should drop (based on first accessible database)
         should_drop = False
+        processed_databases.clear()  # Reset for next loop
+
         for db_alias in get_tenant_database_aliases():
             connection = connections[db_alias]
+            db_key = _get_database_key(connection)
+
+            # Skip if we've already processed this physical database
+            if db_key in processed_databases:
+                continue
+            processed_databases.add(db_key)
+
             has_schema = hasattr(connection, 'schema_name')
             if has_schema and schema_exists(self.schema_name, database=db_alias) and (self.auto_drop_schema or force_drop):
                 should_drop = True
@@ -178,8 +218,17 @@ class TenantMixin(models.Model):
             self.pre_drop()
 
             # Drop schema from all tenant databases
+            processed_databases.clear()  # Reset for drop loop
+
             for db_alias in get_tenant_database_aliases():
                 connection = connections[db_alias]
+                db_key = _get_database_key(connection)
+
+                # Skip if we've already processed this physical database
+                if db_key in processed_databases:
+                    continue
+                processed_databases.add(db_key)
+
                 if schema_exists(self.schema_name, database=db_alias):
                     cursor = connection.cursor()
                     cursor.execute('DROP SCHEMA "%s" CASCADE' % self.schema_name)
@@ -235,10 +284,21 @@ class TenantMixin(models.Model):
                 connection.set_schema_to_public()
             else:
                 # Create the schema on all tenant databases
+                # Track unique physical databases to avoid duplicate operations
+                # (prevents self-deadlock when multiple aliases point to same database)
+                processed_databases = set()
+
                 for db_alias in get_tenant_database_aliases():
+                    connection = connections[db_alias]
+                    db_key = _get_database_key(connection)
+
+                    # Skip if we've already processed this physical database
+                    if db_key in processed_databases:
+                        continue
+                    processed_databases.add(db_key)
+
                     # Check if schema exists on this specific database
                     if not schema_exists(self.schema_name, database=db_alias):
-                        connection = connections[db_alias]
                         cursor = connection.cursor()
                         cursor.execute('CREATE SCHEMA "%s"' % self.schema_name)
 
