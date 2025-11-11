@@ -158,16 +158,22 @@ class TenantMixin(models.Model):
         elif is_new:
             # although we are not using the schema functions directly, the signal might be registered by a listener
             schema_needs_to_be_sync.send(sender=TenantMixin, tenant=self.serializable_fields())
-        elif not is_new and self.auto_create_schema and not schema_exists(self.schema_name):
-            # Create schemas for existing models, deleting only the schema on failure
-            try:
-                self.create_schema(check_if_exists=True, verbosity=verbosity)
-                post_schema_sync.send(sender=TenantMixin, tenant=self.serializable_fields())
-            except Exception:
-                # We failed creating the schema, delete what we created and
-                # re-raise the exception
-                self._drop_schema()
-                raise
+        elif not is_new and self.auto_create_schema:
+            # Check if schema is missing from any database (multi-database support)
+            schema_missing = any(
+                not schema_exists(self.schema_name, database=db_alias)
+                for db_alias in get_tenant_database_aliases()
+            )
+            if schema_missing:
+                # Create schemas for existing models on databases where missing
+                try:
+                    self.create_schema(check_if_exists=True, verbosity=verbosity)
+                    post_schema_sync.send(sender=TenantMixin, tenant=self.serializable_fields())
+                except Exception:
+                    # We failed creating the schema, delete what we created and
+                    # re-raise the exception
+                    self._drop_schema()
+                    raise
 
     def serializable_fields(self):
         """ in certain cases the user model isn't serializable so you may want to only send the id """
@@ -214,8 +220,9 @@ class TenantMixin(models.Model):
 
                 if schema_exists(self.schema_name, database=db_alias):
                     # Drop the schema. PostgreSQL allows dropping from any schema context.
-                    # Use on_commit to ensure DROP happens after transaction commits,
-                    # avoiding "pending trigger events" errors in test environments
+                    # Use on_commit to defer DROP execution until after the model delete() completes.
+                    # Even in autocommit mode (TransactionTestCase), this defers execution enough
+                    # to avoid "pending trigger events" errors.
                     def drop_schema():
                         # Re-check schema exists since transaction might have been rolled back
                         if schema_exists(self.schema_name, database=db_alias):
@@ -245,12 +252,17 @@ class TenantMixin(models.Model):
         Creates the schema 'schema_name' for this tenant. Optionally checks if
         the schema already exists before creating it. Returns true if the
         schema was created, false otherwise.
+
+        In multi-database setups, this will create the schema on all databases
+        where it doesn't exist. The check_if_exists parameter is handled
+        per-database in the creation loop.
         """
 
         _check_schema_name(self.schema_name)
 
-        if check_if_exists and schema_exists(self.schema_name):
-            return False
+        # Note: We don't do an early return check here anymore. In multi-database
+        # setups, we need to check each database individually (done in the loop below)
+        # to create the schema only on databases where it doesn't exist.
 
         fake_migrations = get_creation_fakes_migrations()
 

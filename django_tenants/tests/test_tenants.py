@@ -1128,3 +1128,70 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
                 super(get_tenant_model(), tenant).delete()
             except Exception:
                 pass
+
+    def test_create_schema_creates_missing_schemas_across_databases(self):
+        """
+        Should create schemas on databases where they're missing, even with check_if_exists=True.
+
+        When create_schema(check_if_exists=True) is called and a schema exists on some
+        databases but not others, it should create the schema on the databases where
+        it's missing. The check_if_exists parameter should be evaluated per-database,
+        not globally.
+        """
+        from django_tenants.utils import get_tenant_database_aliases, schema_exists
+        from django.conf import settings
+
+        # Create a new tenant without auto-creation
+        tenant = get_tenant_model()(schema_name='check_exists_bug_test')
+        tenant.auto_create_schema = False
+        tenant.save()
+
+        try:
+            tenant_dbs = get_tenant_database_aliases()
+            non_mirrored_dbs = [
+                db for db in tenant_dbs
+                if not settings.DATABASES.get(db, {}).get('TEST', {}).get('MIRROR')
+            ]
+
+            # Manually create schema ONLY on default database
+            default_db = non_mirrored_dbs[0]  # Should be 'default'
+            cursor = connections[default_db].cursor()
+            cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{tenant.schema_name}"')
+            cursor.close()
+
+            # Verify: exists on default, not on others
+            self.assertTrue(schema_exists(tenant.schema_name, database=default_db),
+                          "Schema should exist on default")
+
+            for db_alias in non_mirrored_dbs[1:]:  # Check other databases
+                self.assertFalse(schema_exists(tenant.schema_name, database=db_alias),
+                               f"Schema should NOT exist on {db_alias} yet")
+
+            # Now call create_schema with check_if_exists=True
+            # Should create schema on databases where it's missing (e.g., 'other')
+            # even though it exists on 'default'
+            result = tenant.create_schema(check_if_exists=True, sync_schema=True, verbosity=0)
+
+            # Verify schema was created on all databases where it was missing
+            if len(non_mirrored_dbs) > 1:
+                for db_alias in non_mirrored_dbs[1:]:
+                    exists = schema_exists(tenant.schema_name, database=db_alias)
+                    self.assertTrue(exists,
+                                  f"Schema should have been created on {db_alias} "
+                                  f"by create_schema(check_if_exists=True)")
+
+        finally:
+            # Cleanup
+            connection.set_schema_to_public()
+            # Drop schemas manually from all databases
+            for db_alias in non_mirrored_dbs:
+                try:
+                    cursor = connections[db_alias].cursor()
+                    cursor.execute(f'DROP SCHEMA IF EXISTS "{tenant.schema_name}" CASCADE')
+                    cursor.close()
+                except Exception:
+                    pass
+            try:
+                super(get_tenant_model(), tenant).delete()
+            except Exception:
+                pass
