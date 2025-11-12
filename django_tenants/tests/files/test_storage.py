@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import tempfile
 import warnings
@@ -31,7 +32,7 @@ class TenantFileSystemStorageTestCase(BaseTestCase):
         shutil.rmtree(self.temp_dir2)
 
     def test_deprecated_module_raises_warning(self):
-        with warnings.catch_warnings(record=True) as warns:
+        with warnings.catch_warnings(record=True, action="once") as warns:
             deprecation_warning = (
                 "TenantFileSystemStorage has been moved from django_tenants.files.storages "
                 "to django_tenants.files.storage."
@@ -148,21 +149,25 @@ class TenantFileSystemStorageTestCase(BaseTestCase):
 
     def test_files_are_saved_under_subdirectories_per_tenant(self):
         # Create new tenants
-        tenant1 = utils.get_tenant_model()(schema_name="tenant1")
+        TenantModel = utils.get_tenant_model()
+        TenantDomainModel = utils.get_tenant_domain_model()
+        TenantModel.deactivate()
+
+        tenant1 = TenantModel(schema_name="tenant1")
         tenant1.save()
 
-        domain1 = utils.get_tenant_domain_model()(
+        domain1 = TenantDomainModel(
             tenant=tenant1, domain="something.test.com"
         )
         domain1.save()
 
-        tenant2 = utils.get_tenant_model()(schema_name="tenant2")
+        tenant2 = TenantModel(schema_name="tenant2")
         tenant2.save()
 
-        domain2 = utils.get_tenant_domain_model()(tenant=tenant2, domain="example.com")
+        domain2 = TenantDomainModel(tenant=tenant2, domain="example.com")
         domain2.save()
 
-        connection.set_schema_to_public()
+        TenantModel.deactivate()
 
         # This file should be saved on the public schema
         public_file_name = self.storage.save("hello_world.txt", ContentFile("Hello World"))
@@ -188,9 +193,7 @@ class TenantFileSystemStorageTestCase(BaseTestCase):
             t2_url = storage.url(t2_file_name)
 
         # Assert the paths are correct
-        self.assertTrue(
-            public_os_path.endswith("public/%s" % public_file_name)
-        )
+        self.assertRegex(public_os_path, re.escape("public/%s" % public_file_name) + r'$')
         self.assertTrue(t1_os_path.endswith("tenant1/%s" % t1_file_name))
         self.assertTrue(t2_os_path.endswith("tenant2/%s" % t2_file_name))
 

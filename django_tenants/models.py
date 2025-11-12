@@ -133,19 +133,26 @@ class TenantMixin(models.Model):
             connection.set_schema_to_public()
 
     def save(self, verbosity=1, *args, **kwargs):
-        connection = connections[get_tenant_database_alias()]
         is_new = self._state.adding
-        has_schema = hasattr(connection, 'schema_name')
-        if has_schema and is_new and connection.schema_name != get_public_schema_name():
-            raise Exception("Can't create tenant outside the public schema. "
-                            "Current schema is %s." % connection.schema_name)
-        elif has_schema and not is_new and connection.schema_name not in (self.schema_name, get_public_schema_name()):
-            raise Exception("Can't update tenant outside it's own schema or "
-                            "the public schema. Current schema is %s."
-                            % connection.schema_name)
+
+        # Validate all tenant databases have correct schema
+        for db_alias in get_tenant_database_aliases():
+            connection = connections[db_alias]
+            has_schema = hasattr(connection, 'schema_name')
+
+            if has_schema and is_new and connection.schema_name != get_public_schema_name():
+                raise Exception(f"Can't create tenant outside the public schema. "
+                              f"Current schema is {connection.schema_name} on database '{db_alias}'.")
+            elif has_schema and not is_new and connection.schema_name not in (self.schema_name, get_public_schema_name()):
+                raise Exception(f"Can't update tenant outside it's own schema or "
+                              f"the public schema. Current schema is {connection.schema_name} "
+                              f"on database '{db_alias}'.")
 
         super().save(*args, **kwargs)
 
+        # All tenant databases have schema support (checked above)
+        # Note: has_schema is True for all databases returned by get_tenant_database_aliases()
+        has_schema = len(get_tenant_database_aliases()) > 0
         if has_schema and is_new and self.auto_create_schema:
             try:
                 self.create_schema(check_if_exists=True, verbosity=verbosity)
@@ -223,10 +230,11 @@ class TenantMixin(models.Model):
                     # Use on_commit to defer DROP execution until after the model delete() completes.
                     # Even in autocommit mode (TransactionTestCase), this defers execution enough
                     # to avoid "pending trigger events" errors.
-                    def drop_schema():
+                    # Use default parameter to capture current db_alias value (avoid closure bug)
+                    def drop_schema(captured_db_alias=db_alias):
                         # Re-check schema exists since transaction might have been rolled back
-                        if schema_exists(self.schema_name, database=db_alias):
-                            cursor = connections[db_alias].cursor()
+                        if schema_exists(self.schema_name, database=captured_db_alias):
+                            cursor = connections[captured_db_alias].cursor()
                             cursor.execute('DROP SCHEMA "%s" CASCADE' % self.schema_name)
 
                     from django.db import transaction

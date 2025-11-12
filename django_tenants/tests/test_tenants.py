@@ -17,7 +17,7 @@ from django_tenants.migration_executors import get_executor
 from django_tenants.test.cases import TenantTestCase
 from django_tenants.tests.testcases import BaseTestCase
 from django_tenants.utils import tenant_context, schema_context, schema_exists, get_tenant_model, \
-    get_public_schema_name, get_tenant_domain_model, schema_rename
+    get_public_schema_name, get_tenant_domain_model, schema_rename, get_tenant_database_aliases
 
 
 @contextmanager
@@ -862,6 +862,11 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
+
+        # Clear cache to ensure get_tenant_database_aliases() detects all databases
+        # configured for this test class (databases = '__all__')
+        get_tenant_database_aliases.cache_clear()
+
         cls.sync_shared()
 
         cls.public_tenant = get_tenant_model()(schema_name=get_public_schema_name())
@@ -884,6 +889,10 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         cls.tenant.delete(force_drop=True)
         cls.public_domain.delete()
         cls.public_tenant.delete()
+
+        # Clear cache to avoid affecting other test classes
+        get_tenant_database_aliases.cache_clear()
+
         super().tearDownClass()
 
     def test_activate_sets_tenant_on_all_databases(self):
@@ -1022,6 +1031,9 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         """
         from django_tenants.utils import get_tenant_database_aliases
 
+        # Ensure all databases are on public schema before creating second tenant
+        get_tenant_model().deactivate()
+
         # Create a second tenant for nesting
         tenant2 = get_tenant_model()(schema_name='multidb_test2')
         tenant2.save()
@@ -1054,8 +1066,8 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
                 self.assertEqual(connections[db_alias].schema_name, public_schema)
 
         finally:
-            # Cleanup
-            connection.set_schema_to_public()
+            # Cleanup - reset all databases to public schema
+            get_tenant_model().deactivate()
             domain2.delete()
             tenant2.delete(force_drop=True)
 
@@ -1089,8 +1101,8 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
                               f"Schema should exist on {db_alias} after create_schema()")
 
         finally:
-            # Cleanup
-            connection.set_schema_to_public()
+            # Cleanup - reset all databases to public schema
+            get_tenant_model().deactivate()
             tenant.delete(force_drop=True)
 
     def test_drop_schema_from_all_databases(self):
@@ -1128,6 +1140,146 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
                 super(get_tenant_model(), tenant).delete()
             except Exception:
                 pass
+
+    def test_save_create_validates_all_databases_on_public_schema(self):
+        """
+        Should validate all databases are on public schema when creating a new tenant.
+
+        When creating a new tenant (is_new=True), save() should verify that ALL
+        databases with the django-tenants engine are on the public schema.
+        If any database is on a tenant schema, it should raise an exception.
+        """
+        from django_tenants.utils import get_tenant_database_aliases
+
+        # Set all databases to public schema
+        get_tenant_model().deactivate()
+
+        # Activate another tenant on ONE database only
+        connections['other'].set_tenant(self.tenant)
+
+        try:
+            # Try to create a new tenant - should fail because 'other' is not on public
+            new_tenant = get_tenant_model()(schema_name='validation_test')
+            with self.assertRaises(Exception) as cm:
+                new_tenant.save()
+
+            self.assertIn("Can't create tenant outside the public schema", str(cm.exception))
+            self.assertIn('other', str(cm.exception),
+                        "Error message should indicate which database has the wrong schema")
+        finally:
+            # Cleanup - reset all databases to public schema
+            get_tenant_model().deactivate()
+
+    def test_save_create_succeeds_when_all_databases_on_public(self):
+        """
+        Should allow creating tenant when all databases are on public schema.
+
+        When creating a new tenant and all databases are on the public schema,
+        save() should succeed and create the tenant.
+        """
+        from django_tenants.utils import get_public_schema_name
+
+        # Set all databases to public schema
+        get_tenant_model().deactivate()
+
+        # Verify all databases are on public
+        for db_alias in get_tenant_database_aliases():
+            self.assertEqual(connections[db_alias].schema_name, get_public_schema_name())
+
+        # Create a new tenant - should succeed
+        new_tenant = get_tenant_model()(schema_name='validation_success_test')
+        new_tenant.save()
+
+        try:
+            # Verify tenant was created
+            self.assertIsNotNone(new_tenant.pk)
+        finally:
+            # Cleanup - reset all databases to public schema
+            get_tenant_model().deactivate()
+            new_tenant.delete(force_drop=True)
+
+    def test_save_update_validates_all_databases_have_correct_schema(self):
+        """
+        Should validate all databases when updating an existing tenant.
+
+        When updating an existing tenant (is_new=False), save() should verify
+        that ALL databases are either on the tenant's own schema or the public
+        schema. If any database is on a different tenant's schema, it should
+        raise an exception.
+        """
+        # Ensure all databases are on public schema before creating second tenant
+        get_tenant_model().deactivate()
+
+        # Create a second tenant
+        tenant2 = get_tenant_model()(schema_name='validation_tenant2')
+        tenant2.save()
+        domain2 = get_tenant_domain_model()(tenant=tenant2, domain='validation2.test.com')
+        domain2.save()
+
+        try:
+            # Set all databases to public
+            get_tenant_model().deactivate()
+
+            # Set ONE database to a different tenant's schema
+            connections['other'].set_tenant(tenant2)
+
+            # Try to update self.tenant - should fail because 'other' is on tenant2's schema
+            self.tenant.domain_urls = ['updated.test.com']
+            with self.assertRaises(Exception) as cm:
+                self.tenant.save()
+
+            self.assertIn("Can't update tenant outside", str(cm.exception))
+            self.assertIn('other', str(cm.exception),
+                        "Error message should indicate which database has the wrong schema")
+        finally:
+            # Cleanup - reset all databases to public schema
+            get_tenant_model().deactivate()
+            domain2.delete()
+            tenant2.delete(force_drop=True)
+
+    def test_save_update_succeeds_when_all_databases_on_public(self):
+        """
+        Should allow updating tenant when all databases are on public schema.
+
+        When updating an existing tenant and all databases are on the public
+        schema, save() should succeed.
+        """
+        from django_tenants.utils import get_public_schema_name
+
+        # Set all databases to public schema
+        get_tenant_model().deactivate()
+
+        # Verify all databases are on public
+        for db_alias in get_tenant_database_aliases():
+            self.assertEqual(connections[db_alias].schema_name, get_public_schema_name())
+
+        # Update the tenant - should succeed
+        self.tenant.domain_urls = ['updated-from-public.test.com']
+        self.tenant.save()
+
+        # Verify update succeeded
+        self.assertEqual(self.tenant.domain_urls, ['updated-from-public.test.com'])
+
+    def test_save_update_succeeds_when_all_databases_on_tenant_schema(self):
+        """
+        Should allow updating tenant when all databases are on the tenant's own schema.
+
+        When updating an existing tenant and all databases are on the tenant's
+        own schema, save() should succeed.
+        """
+        # Activate the tenant on all databases
+        self.tenant.activate()
+
+        # Verify all databases are on tenant's schema
+        for db_alias in get_tenant_database_aliases():
+            self.assertEqual(connections[db_alias].schema_name, 'multidb_test')
+
+        # Update the tenant - should succeed
+        self.tenant.domain_urls = ['updated-from-tenant.test.com']
+        self.tenant.save()
+
+        # Verify update succeeded
+        self.assertEqual(self.tenant.domain_urls, ['updated-from-tenant.test.com'])
 
     def test_create_schema_creates_missing_schemas_across_databases(self):
         """

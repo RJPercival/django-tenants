@@ -44,6 +44,11 @@ class TenantTestCase(TestCase):
         super().setUpClass()
         cls.sync_shared()
         cls.add_allowed_test_domain()
+
+        # Ensure all databases are on public schema before creating tenant
+        # (required for multi-database validation in save())
+        get_tenant_model().deactivate()
+
         cls.tenant = get_tenant_model()(schema_name=cls.get_test_schema_name())
         cls.setup_tenant(cls.tenant)
         cls.tenant.save(verbosity=cls.get_verbosity())
@@ -140,6 +145,10 @@ class FastTenantTestCase(TenantTestCase):
 
     @classmethod
     def setup_test_tenant_and_domain(cls):
+        # Ensure all databases are on public schema before creating tenant
+        # (required for multi-database validation in save())
+        get_tenant_model().deactivate()
+
         cls.tenant = get_tenant_model()(schema_name=cls.get_test_schema_name())
         cls.setup_tenant(cls.tenant)
         cls.tenant.save(verbosity=cls.get_verbosity())
