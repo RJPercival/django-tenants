@@ -863,8 +863,8 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
     def setUpClass(cls):
         super().setUpClass()
 
-        # Clear cache to ensure get_tenant_database_aliases() detects all databases
-        # configured for this test class (databases = '__all__')
+        # Clear cache because this test class uses databases = '__all__'
+        # which makes all tenant databases available (not just 'default')
         get_tenant_database_aliases.cache_clear()
 
         cls.sync_shared()
@@ -889,9 +889,6 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         cls.tenant.delete(force_drop=True)
         cls.public_domain.delete()
         cls.public_tenant.delete()
-
-        # Clear cache to avoid affecting other test classes
-        get_tenant_database_aliases.cache_clear()
 
         super().tearDownClass()
 
