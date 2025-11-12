@@ -41,7 +41,11 @@ def run_migrations(args, options, executor_codename, schema_name, tenant_type=''
 
     schema_pre_migration.send(run_migrations, schema_name=schema_name)
 
-    connection = connections[options.get('database', get_tenant_database_alias())]
+    # Use default database if not specified in options.
+    # Note: run_migrations() operates on a single database. Multi-database
+    # iteration happens at the executor level via _get_databases_to_migrate().
+    database = options.get('database') or get_tenant_database_alias()
+    connection = connections[database]
     connection.set_schema(schema_name, tenant_type=tenant_type, include_public=False)
 
     # ensure that django_migrations table is created in the schema before migrations run, otherwise the migration
@@ -90,3 +94,36 @@ class MigrationExecutor:
 
     def run_multi_type_migrations(self, tenants):
         raise NotImplementedError
+
+    def _get_databases_to_migrate(self) -> list[str]:
+        """
+        Get the list of databases to migrate.
+
+        Returns:
+            list[str]: List of database aliases to migrate. If 'database' option
+                       is None, returns all accessible tenant databases (excluding
+                       MIRROR databases which should be managed by their source).
+                       Otherwise, returns the single specified database.
+        """
+        from django.conf import settings
+        from django_tenants.utils import get_tenant_database_aliases
+
+        database = self.options.get('database')
+        if database is None:
+            # No database specified, migrate all tenant databases
+            all_databases = get_tenant_database_aliases()
+
+            # Filter out MIRROR databases - they should be managed by their source database
+            # Note: Django adds default TEST config with MIRROR=None, so we check the value
+            accessible_databases = []
+            for db_alias in all_databases:
+                db_config = settings.DATABASES.get(db_alias, {})
+                test_config = db_config.get('TEST', {})
+                # Skip databases that have MIRROR set to a non-empty value
+                if not test_config.get('MIRROR'):
+                    accessible_databases.append(db_alias)
+
+            return accessible_databases
+        else:
+            # Specific database specified, migrate only that one
+            return [database]

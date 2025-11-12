@@ -2,7 +2,7 @@ from django.db.migrations.autodetector import MigrationAutodetector
 
 from django_tenants.migration_executors import get_executor
 from django_tenants.utils import get_tenant_model, get_public_schema_name, schema_exists, get_tenant_database_alias, \
-    has_multi_type_tenants, get_multi_type_database_field_name, get_tenant_migration_order
+    get_tenant_database_aliases, has_multi_type_tenants, get_multi_type_database_field_name, get_tenant_migration_order
 from django_tenants.management.commands import SyncCommon
 from django.utils.module_loading import import_string
 from django.conf import settings
@@ -33,8 +33,9 @@ class MigrateSchemasCommand(SyncCommon):
         parser.add_argument('--no-initial-data', action='store_false', dest='load_initial_data', default=True,
                             help='Tells Django not to load any initial data after database synchronization.')
         parser.add_argument('--database', action='store', dest='database',
-                            default=get_tenant_database_alias(), help='Nominates a database to synchronize. '
-                            'Defaults to the "default" database.')
+                            default=None, help='Nominates a database to synchronize. '
+                            'If not specified, migrates all tenant databases. '
+                            'Specify a database alias to migrate only that database.')
         parser.add_argument('--fake', action='store_true', dest='fake', default=False,
                             help='Mark migrations as run without actually running them')
         parser.add_argument('--fake-initial', action='store_true', dest='fake_initial', default=False,
@@ -66,8 +67,20 @@ class MigrateSchemasCommand(SyncCommon):
             executor.run_migrations(tenants=[self.PUBLIC_SCHEMA_NAME])
         if self.sync_tenant:
             if self.schema_name and self.schema_name != self.PUBLIC_SCHEMA_NAME:
-                if not schema_exists(self.schema_name, self.options.get('database', None)):
-                    raise RuntimeError('Schema "{}" does not exist'.format(
+                # Check if schema exists on the specified database(s)
+                database = self.options.get('database')
+                if database is None:
+                    # Check all tenant databases
+                    databases_to_check = get_tenant_database_aliases()
+                else:
+                    # Check only specified database
+                    databases_to_check = [database]
+
+                schema_found = any(
+                    schema_exists(self.schema_name, db) for db in databases_to_check
+                )
+                if not schema_found:
+                    raise RuntimeError('Schema "{}" does not exist on any tenant database'.format(
                         self.schema_name))
                 elif has_multi_type_tenants():
                     type_field_name = get_multi_type_database_field_name()
