@@ -4589,7 +4589,20 @@ class CloneSchema:
         """
         Creates a new schema `new_schema_name` as a clone of an existing schema
         `old_schema_name`.
+
+        Note: CloneSchema only works with single-database setups. It will raise
+        NotImplementedError if multiple tenant databases are configured.
         """
+        # Check if we're in a multi-database setup
+        from django_tenants.utils import get_tenant_database_aliases
+        tenant_dbs = get_tenant_database_aliases()
+        if len(tenant_dbs) > 1:
+            raise NotImplementedError(
+                "CloneSchema only supports single-database setups. "
+                f"Found {len(tenant_dbs)} tenant databases: {tenant_dbs}. "
+                "Multi-database schema cloning is not yet implemented."
+            )
+
         if set_connection:
             connection.set_schema_to_public()
         cursor = connection.cursor()
