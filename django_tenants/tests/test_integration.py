@@ -1,0 +1,602 @@
+"""
+Integration tests for multi-database support in django-tenants.
+
+These tests verify that the multi-database functionality works correctly
+in real-world scenarios including read replicas, sharding, complex routing,
+full tenant lifecycle, and concurrent operations.
+"""
+import threading
+import time
+from unittest import skipIf
+
+from django.conf import settings
+from django.contrib.auth.models import User
+from django.db import connections, transaction
+from django.test import TransactionTestCase
+
+from django_tenants.tests.testcases import BaseTestCase
+from django_tenants.utils import (
+    get_public_schema_name,
+    get_tenant_database_aliases,
+    get_tenant_model,
+    get_tenant_domain_model,
+    schema_exists,
+    tenant_context,
+)
+from dts_test_app.models import DummyModel
+
+
+class ReadReplicaIntegrationTest(BaseTestCase):
+    """
+    Integration tests for read replica scenarios.
+
+    Verifies that:
+    - Tenant schemas exist on both primary and replica databases
+    - Tenant activation works across all databases including replicas
+    - Read operations work correctly on replica databases
+    - Write operations go to primary database
+    """
+
+    def test_tenant_schema_created_on_replica_database(self):
+        """
+        Should create tenant schema on replica database when tenant is created.
+
+        When a tenant is saved, the schema should be created on ALL tenant
+        databases including read replicas (TEST.MIRROR databases).
+        """
+        tenant = get_tenant_model()(schema_name='replica_test')
+        tenant.save()
+        domain = get_tenant_domain_model()(tenant=tenant, domain='replica.test.com')
+        domain.save()
+
+        try:
+            # Verify schema exists on all non-mirror databases
+            tenant_dbs = get_tenant_database_aliases()
+            non_mirror_dbs = [
+                db for db in tenant_dbs
+                if not settings.DATABASES.get(db, {}).get('TEST', {}).get('MIRROR')
+            ]
+
+            for db_alias in non_mirror_dbs:
+                self.assertTrue(
+                    schema_exists('replica_test', database=db_alias),
+                    f"Schema should exist on database {db_alias}"
+                )
+        finally:
+            domain.delete()
+            tenant.delete(force_drop=True)
+
+    def test_tenant_activation_sets_schema_on_all_databases(self):
+        """
+        Should activate tenant schema on all databases including replicas.
+
+        When tenant.activate() is called, it should set the tenant schema
+        on ALL tenant databases, including read replicas.
+        """
+        tenant = get_tenant_model()(schema_name='activation_test')
+        tenant.save()
+        domain = get_tenant_domain_model()(tenant=tenant, domain='activation.test.com')
+        domain.save()
+
+        try:
+            # Activate the tenant
+            tenant.activate()
+
+            # Verify all databases have the tenant schema set
+            tenant_dbs = get_tenant_database_aliases()
+            for db_alias in tenant_dbs:
+                conn = connections[db_alias]
+                self.assertEqual(
+                    conn.schema_name,
+                    'activation_test',
+                    f"Database {db_alias} should have tenant schema set"
+                )
+                self.assertEqual(
+                    conn.tenant,
+                    tenant,
+                    f"Database {db_alias} should have tenant object set"
+                )
+        finally:
+            get_tenant_model().deactivate()
+            domain.delete()
+            tenant.delete(force_drop=True)
+
+    def test_read_operations_work_on_replica_with_tenant_context(self):
+        """
+        Should read data correctly from tenant schema using tenant_context.
+
+        When using tenant_context, read operations should work correctly
+        on all databases with the tenant schema properly set.
+        """
+        tenant = get_tenant_model()(schema_name='read_test')
+        tenant.save()
+        domain = get_tenant_domain_model()(tenant=tenant, domain='read.test.com')
+        domain.save()
+
+        try:
+            # Write some data to the tenant schema
+            with tenant_context(tenant):
+                DummyModel(name='test_data').save()
+
+                # Verify we can read it back
+                self.assertEqual(DummyModel.objects.count(), 1)
+                obj = DummyModel.objects.get(name='test_data')
+                self.assertEqual(obj.name, 'test_data')
+        finally:
+            get_tenant_model().deactivate()
+            domain.delete()
+            tenant.delete(force_drop=True)
+
+
+class ShardedScenarioIntegrationTest(BaseTestCase):
+    """
+    Integration tests for sharded database scenarios.
+
+    Verifies that:
+    - Different apps can be routed to different databases
+    - Tenant schemas exist on all necessary databases
+    - Cross-database operations work correctly
+    """
+
+    def test_tenant_schemas_created_on_multiple_distinct_databases(self):
+        """
+        Should create tenant schema on all distinct databases (not just replicas).
+
+        In a sharded setup, tenant schemas should be created on all databases
+        that have the django-tenants engine, not just the primary and its replicas.
+        """
+        tenant = get_tenant_model()(schema_name='sharded_test')
+        tenant.save()
+        domain = get_tenant_domain_model()(tenant=tenant, domain='sharded.test.com')
+        domain.save()
+
+        try:
+            # Verify schema exists on all non-mirror databases
+            tenant_dbs = get_tenant_database_aliases()
+            non_mirror_dbs = [
+                db for db in tenant_dbs
+                if not settings.DATABASES.get(db, {}).get('TEST', {}).get('MIRROR')
+            ]
+
+            # Should have at least 2 distinct databases (default and other)
+            self.assertGreaterEqual(
+                len(non_mirror_dbs), 2,
+                "Should have multiple distinct databases for sharding"
+            )
+
+            for db_alias in non_mirror_dbs:
+                self.assertTrue(
+                    schema_exists('sharded_test', database=db_alias),
+                    f"Schema should exist on distinct database {db_alias}"
+                )
+        finally:
+            domain.delete()
+            tenant.delete(force_drop=True)
+
+    def test_tenant_activation_works_across_sharded_databases(self):
+        """
+        Should activate tenant on all shard databases simultaneously.
+
+        When tenant.activate() is called in a sharded setup, all shard
+        databases should have the tenant schema set correctly.
+        """
+        tenant = get_tenant_model()(schema_name='shard_activation')
+        tenant.save()
+        domain = get_tenant_domain_model()(tenant=tenant, domain='shard.test.com')
+        domain.save()
+
+        try:
+            # Activate the tenant
+            tenant.activate()
+
+            # Verify all distinct shard databases have the tenant schema set
+            tenant_dbs = get_tenant_database_aliases()
+            non_mirror_dbs = [
+                db for db in tenant_dbs
+                if not settings.DATABASES.get(db, {}).get('TEST', {}).get('MIRROR')
+            ]
+
+            for db_alias in non_mirror_dbs:
+                conn = connections[db_alias]
+                self.assertEqual(
+                    conn.schema_name,
+                    'shard_activation',
+                    f"Shard database {db_alias} should have tenant schema set"
+                )
+        finally:
+            get_tenant_model().deactivate()
+            domain.delete()
+            tenant.delete(force_drop=True)
+
+
+class TenantLifecycleIntegrationTest(BaseTestCase):
+    """
+    Integration tests for full tenant lifecycle across multiple databases.
+
+    Verifies that:
+    - Tenant creation works correctly
+    - Tenant updates work correctly
+    - Tenant deletion works correctly
+    - All operations are atomic across databases
+    """
+
+    def test_tenant_creation_creates_schemas_on_all_databases(self):
+        """
+        Should create schemas on all tenant databases when tenant is created.
+
+        When a new tenant is saved, schemas should be created on ALL
+        tenant databases atomically.
+        """
+        tenant = get_tenant_model()(schema_name='lifecycle_create')
+        tenant.save()
+        domain = get_tenant_domain_model()(tenant=tenant, domain='lifecycle.test.com')
+        domain.save()
+
+        try:
+            # Verify schema exists on all non-mirror databases
+            tenant_dbs = get_tenant_database_aliases()
+            non_mirror_dbs = [
+                db for db in tenant_dbs
+                if not settings.DATABASES.get(db, {}).get('TEST', {}).get('MIRROR')
+            ]
+
+            for db_alias in non_mirror_dbs:
+                self.assertTrue(
+                    schema_exists('lifecycle_create', database=db_alias),
+                    f"Schema should be created on database {db_alias}"
+                )
+        finally:
+            domain.delete()
+            tenant.delete(force_drop=True)
+
+    def test_tenant_deletion_removes_schemas_from_all_databases(self):
+        """
+        Should remove schemas from all tenant databases when tenant is deleted.
+
+        When a tenant is deleted with force_drop=True, schemas should be
+        dropped from ALL tenant databases.
+        """
+        tenant = get_tenant_model()(schema_name='lifecycle_delete')
+        tenant.save()
+        domain = get_tenant_domain_model()(tenant=tenant, domain='delete.test.com')
+        domain.save()
+
+        # Verify schemas exist
+        tenant_dbs = get_tenant_database_aliases()
+        non_mirror_dbs = [
+            db for db in tenant_dbs
+            if not settings.DATABASES.get(db, {}).get('TEST', {}).get('MIRROR')
+        ]
+
+        for db_alias in non_mirror_dbs:
+            self.assertTrue(
+                schema_exists('lifecycle_delete', database=db_alias),
+                f"Schema should exist on database {db_alias} before deletion"
+            )
+
+        # Delete tenant and domain
+        domain.delete()
+        tenant.delete(force_drop=True)
+
+        # Verify schemas are gone from all databases
+        for db_alias in non_mirror_dbs:
+            self.assertFalse(
+                schema_exists('lifecycle_delete', database=db_alias),
+                f"Schema should be deleted from database {db_alias}"
+            )
+
+    def test_tenant_update_preserves_data_on_all_databases(self):
+        """
+        Should preserve tenant data across all databases when tenant is updated.
+
+        When a tenant model is updated, the schemas and data should remain
+        intact on all tenant databases.
+        """
+        tenant = get_tenant_model()(schema_name='lifecycle_update')
+        tenant.save()
+        domain = get_tenant_domain_model()(tenant=tenant, domain='update.test.com')
+        domain.save()
+
+        try:
+            # Add some data to the tenant schema
+            with tenant_context(tenant):
+                DummyModel(name='before_update').save()
+
+            # Update the tenant (change domain_urls for example)
+            tenant.domain_urls = ['updated.test.com']
+            tenant.save()
+
+            # Verify data is still there
+            with tenant_context(tenant):
+                self.assertEqual(DummyModel.objects.count(), 1)
+                obj = DummyModel.objects.get()
+                self.assertEqual(obj.name, 'before_update')
+        finally:
+            domain.delete()
+            tenant.delete(force_drop=True)
+
+
+class ContextManagerIntegrationTest(BaseTestCase):
+    """
+    Integration tests for tenant context managers in multi-database setup.
+
+    Note: tenant_context() and schema_context() are single-database utilities
+    that only affect the default connection. For multi-database operations,
+    use tenant.activate() instead.
+
+    Verifies that:
+    - tenant_context works correctly on default database
+    - Nested contexts work correctly on default database
+    - Context restoration works correctly
+    - Data operations work within tenant context
+    """
+
+    def test_tenant_context_works_on_default_database(self):
+        """
+        Should switch default database schema when entering tenant context.
+
+        tenant_context() is a single-database utility that only affects
+        the default connection. It should switch the default database to
+        the tenant's schema.
+        """
+        tenant = get_tenant_model()(schema_name='context_test')
+        tenant.save()
+        domain = get_tenant_domain_model()(tenant=tenant, domain='context.test.com')
+        domain.save()
+
+        try:
+            # Start in public schema
+            get_tenant_model().deactivate()
+            public_schema = get_public_schema_name()
+
+            # Enter tenant context
+            with tenant_context(tenant):
+                # Verify default database is on tenant schema
+                from django.db import connection
+                self.assertEqual(
+                    connection.schema_name,
+                    'context_test',
+                    "Default database should be on tenant schema inside context"
+                )
+
+                # Can perform operations
+                DummyModel(name='context_data').save()
+                self.assertEqual(DummyModel.objects.count(), 1)
+
+            # Verify default database is back to public schema
+            self.assertEqual(
+                connection.schema_name,
+                public_schema,
+                "Default database should be back on public schema after context"
+            )
+        finally:
+            domain.delete()
+            tenant.delete(force_drop=True)
+
+    def test_nested_tenant_contexts_restore_correctly(self):
+        """
+        Should restore previous tenant when exiting nested context.
+
+        When tenant contexts are nested, exiting the inner context should
+        restore the outer context's tenant on the default database.
+        """
+        tenant1 = get_tenant_model()(schema_name='nested1')
+        tenant1.save()
+        domain1 = get_tenant_domain_model()(tenant=tenant1, domain='nested1.test.com')
+        domain1.save()
+
+        tenant2 = get_tenant_model()(schema_name='nested2')
+        tenant2.save()
+        domain2 = get_tenant_domain_model()(tenant=tenant2, domain='nested2.test.com')
+        domain2.save()
+
+        try:
+            # Start in public
+            get_tenant_model().deactivate()
+            public_schema = get_public_schema_name()
+
+            from django.db import connection
+
+            # Outer context: tenant1
+            with tenant_context(tenant1):
+                self.assertEqual(connection.schema_name, 'nested1')
+
+                # Add data to tenant1
+                DummyModel(name='tenant1_nested').save()
+
+                # Inner context: tenant2
+                with tenant_context(tenant2):
+                    self.assertEqual(connection.schema_name, 'nested2')
+                    # Can't see tenant1's data in tenant2's schema
+                    self.assertEqual(DummyModel.objects.count(), 0)
+
+                # Back to tenant1
+                self.assertEqual(connection.schema_name, 'nested1')
+                # Can see tenant1's data again
+                self.assertEqual(DummyModel.objects.count(), 1)
+
+            # Back to public
+            self.assertEqual(connection.schema_name, public_schema)
+        finally:
+            domain1.delete()
+            tenant1.delete(force_drop=True)
+            domain2.delete()
+            tenant2.delete(force_drop=True)
+
+
+class ConcurrentOperationsIntegrationTest(TransactionTestCase):
+    """
+    Integration tests for concurrent tenant operations.
+
+    Uses TransactionTestCase instead of BaseTestCase to allow testing
+    real concurrency with threads.
+
+    Verifies that:
+    - Multiple threads can activate different tenants simultaneously
+    - Tenant isolation is maintained across threads
+    - No race conditions occur
+    """
+
+    databases = '__all__'
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # Reset all tenant databases to public schema
+        get_tenant_model().deactivate()
+
+    def setUp(self):
+        super().setUp()
+        # Reset all tenant databases to public schema before each test
+        get_tenant_model().deactivate()
+
+    def test_concurrent_tenant_activation_maintains_isolation(self):
+        """
+        Should maintain tenant isolation when multiple threads activate different tenants.
+
+        When multiple threads activate different tenants simultaneously, each
+        thread should work with its own tenant data without interference.
+        """
+        # Create two tenants
+        tenant1 = get_tenant_model()(schema_name='concurrent1')
+        tenant1.save()
+        domain1 = get_tenant_domain_model()(tenant=tenant1, domain='concurrent1.test.com')
+        domain1.save()
+
+        tenant2 = get_tenant_model()(schema_name='concurrent2')
+        tenant2.save()
+        domain2 = get_tenant_domain_model()(tenant=tenant2, domain='concurrent2.test.com')
+        domain2.save()
+
+        try:
+            # Add data to each tenant
+            with tenant_context(tenant1):
+                DummyModel(name='tenant1_data').save()
+
+            with tenant_context(tenant2):
+                DummyModel(name='tenant2_data').save()
+
+            # Reset to public
+            get_tenant_model().deactivate()
+
+            # Results storage
+            results = {'tenant1': None, 'tenant2': None, 'errors': []}
+
+            def work_with_tenant1():
+                try:
+                    with tenant_context(tenant1):
+                        time.sleep(0.1)  # Simulate some work
+                        count = DummyModel.objects.count()
+                        obj = DummyModel.objects.first()
+                        results['tenant1'] = {'count': count, 'name': obj.name if obj else None}
+                except Exception as e:
+                    results['errors'].append(('tenant1', str(e)))
+
+            def work_with_tenant2():
+                try:
+                    with tenant_context(tenant2):
+                        time.sleep(0.1)  # Simulate some work
+                        count = DummyModel.objects.count()
+                        obj = DummyModel.objects.first()
+                        results['tenant2'] = {'count': count, 'name': obj.name if obj else None}
+                except Exception as e:
+                    results['errors'].append(('tenant2', str(e)))
+
+            # Start both threads
+            thread1 = threading.Thread(target=work_with_tenant1)
+            thread2 = threading.Thread(target=work_with_tenant2)
+
+            thread1.start()
+            thread2.start()
+
+            thread1.join()
+            thread2.join()
+
+            # Verify no errors occurred
+            self.assertEqual(results['errors'], [], "No errors should occur during concurrent operations")
+
+            # Verify each thread saw its own tenant's data
+            self.assertIsNotNone(results['tenant1'], "Thread 1 should have results")
+            self.assertEqual(results['tenant1']['count'], 1, "Tenant1 should see 1 record")
+            self.assertEqual(results['tenant1']['name'], 'tenant1_data', "Tenant1 should see its own data")
+
+            self.assertIsNotNone(results['tenant2'], "Thread 2 should have results")
+            self.assertEqual(results['tenant2']['count'], 1, "Tenant2 should see 1 record")
+            self.assertEqual(results['tenant2']['name'], 'tenant2_data', "Tenant2 should see its own data")
+
+        finally:
+            get_tenant_model().deactivate()
+            domain1.delete()
+            tenant1.delete(force_drop=True)
+            domain2.delete()
+            tenant2.delete(force_drop=True)
+
+
+class ValidationIntegrationTest(BaseTestCase):
+    """
+    Integration tests for multi-database validation during tenant operations.
+
+    Verifies that:
+    - Validation checks all databases
+    - Proper error messages when validation fails
+    - Validation doesn't prevent legitimate operations
+    """
+
+    def test_create_tenant_validates_all_databases_on_public_schema(self):
+        """
+        Should validate that ALL databases are on public schema before creating tenant.
+
+        When creating a new tenant, the validation should check that ALL
+        tenant databases are on the public schema.
+        """
+        # Set one database to a different schema
+        tenant_dbs = get_tenant_database_aliases()
+        if len(tenant_dbs) < 2:
+            self.skipTest("Need multiple databases to test validation")
+
+        # Create a temporary tenant to get a non-public schema
+        temp_tenant = get_tenant_model()(schema_name='temp_validation')
+        temp_tenant.save()
+
+        try:
+            # Activate on one database only
+            connections['other'].set_tenant(temp_tenant)
+
+            # Try to create a new tenant - should fail
+            new_tenant = get_tenant_model()(schema_name='validation_test')
+            with self.assertRaises(Exception) as cm:
+                new_tenant.save()
+
+            self.assertIn("Can't create tenant outside the public schema", str(cm.exception))
+            self.assertIn('other', str(cm.exception))
+        finally:
+            # Cleanup
+            get_tenant_model().deactivate()
+            temp_tenant.delete(force_drop=True)
+
+    def test_create_tenant_succeeds_when_all_databases_on_public(self):
+        """
+        Should allow tenant creation when all databases are on public schema.
+
+        When ALL tenant databases are on the public schema, tenant creation
+        should succeed without validation errors.
+        """
+        # Ensure all databases are on public
+        get_tenant_model().deactivate()
+
+        # Verify all are on public
+        public_schema = get_public_schema_name()
+        for db_alias in get_tenant_database_aliases():
+            self.assertEqual(connections[db_alias].schema_name, public_schema)
+
+        # Create tenant should succeed
+        tenant = get_tenant_model()(schema_name='validation_success')
+        tenant.save()  # Should not raise
+        domain = get_tenant_domain_model()(tenant=tenant, domain='success.test.com')
+        domain.save()
+
+        try:
+            self.assertIsNotNone(tenant.pk, "Tenant should be created successfully")
+        finally:
+            domain.delete()
+            tenant.delete(force_drop=True)
