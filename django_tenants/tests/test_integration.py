@@ -320,24 +320,25 @@ class ContextManagerIntegrationTest(BaseTestCase):
     """
     Integration tests for tenant context managers in multi-database setup.
 
-    Note: tenant_context() and schema_context() are single-database utilities
-    that only affect the default connection. For multi-database operations,
-    use tenant.activate() instead.
+    tenant_context() and schema_context() now operate on ALL tenant databases
+    for consistency and safety. They switch all databases with the django-tenants
+    engine to the specified tenant/schema.
 
     Verifies that:
-    - tenant_context works correctly on default database
-    - Nested contexts work correctly on default database
-    - Context restoration works correctly
+    - tenant_context switches ALL tenant databases
+    - schema_context switches ALL tenant databases
+    - Nested contexts work correctly across all databases
+    - Context restoration works correctly on all databases
     - Data operations work within tenant context
     """
 
-    def test_tenant_context_works_on_default_database(self):
+    def test_tenant_context_switches_all_databases(self):
         """
-        Should switch default database schema when entering tenant context.
+        Should switch ALL tenant databases when entering tenant context.
 
-        tenant_context() is a single-database utility that only affects
-        the default connection. It should switch the default database to
-        the tenant's schema.
+        tenant_context() now operates on all databases with the django-tenants
+        engine for consistency. It should switch ALL tenant databases to the
+        tenant's schema simultaneously.
         """
         tenant = get_tenant_model()(schema_name='context_test')
         tenant.save()
@@ -345,40 +346,46 @@ class ContextManagerIntegrationTest(BaseTestCase):
         domain.save()
 
         try:
-            # Start in public schema
+            # Start in public schema on all databases
             get_tenant_model().deactivate()
             public_schema = get_public_schema_name()
 
+            # Verify all databases start on public schema
+            tenant_dbs = get_tenant_database_aliases()
+            for db_alias in tenant_dbs:
+                self.assertEqual(connections[db_alias].schema_name, public_schema)
+
             # Enter tenant context
             with tenant_context(tenant):
-                # Verify default database is on tenant schema
-                from django.db import connection
-                self.assertEqual(
-                    connection.schema_name,
-                    'context_test',
-                    "Default database should be on tenant schema inside context"
-                )
+                # Verify ALL databases are on tenant schema
+                for db_alias in tenant_dbs:
+                    self.assertEqual(
+                        connections[db_alias].schema_name,
+                        'context_test',
+                        f"Database {db_alias} should be on tenant schema inside context"
+                    )
 
                 # Can perform operations
                 DummyModel(name='context_data').save()
                 self.assertEqual(DummyModel.objects.count(), 1)
 
-            # Verify default database is back to public schema
-            self.assertEqual(
-                connection.schema_name,
-                public_schema,
-                "Default database should be back on public schema after context"
-            )
+            # Verify ALL databases are back to public schema
+            for db_alias in tenant_dbs:
+                self.assertEqual(
+                    connections[db_alias].schema_name,
+                    public_schema,
+                    f"Database {db_alias} should be back on public schema after context"
+                )
         finally:
             domain.delete()
             tenant.delete(force_drop=True)
 
     def test_nested_tenant_contexts_restore_correctly(self):
         """
-        Should restore previous tenant when exiting nested context.
+        Should restore previous tenant when exiting nested context on ALL databases.
 
         When tenant contexts are nested, exiting the inner context should
-        restore the outer context's tenant on the default database.
+        restore the outer context's tenant on ALL tenant databases.
         """
         tenant1 = get_tenant_model()(schema_name='nested1')
         tenant1.save()
@@ -391,37 +398,150 @@ class ContextManagerIntegrationTest(BaseTestCase):
         domain2.save()
 
         try:
-            # Start in public
+            # Start in public on all databases
             get_tenant_model().deactivate()
             public_schema = get_public_schema_name()
 
-            from django.db import connection
+            tenant_dbs = get_tenant_database_aliases()
 
             # Outer context: tenant1
             with tenant_context(tenant1):
-                self.assertEqual(connection.schema_name, 'nested1')
+                # Verify all databases are on tenant1's schema
+                for db_alias in tenant_dbs:
+                    self.assertEqual(connections[db_alias].schema_name, 'nested1')
 
                 # Add data to tenant1
                 DummyModel(name='tenant1_nested').save()
 
                 # Inner context: tenant2
                 with tenant_context(tenant2):
-                    self.assertEqual(connection.schema_name, 'nested2')
+                    # Verify all databases are on tenant2's schema
+                    for db_alias in tenant_dbs:
+                        self.assertEqual(connections[db_alias].schema_name, 'nested2')
                     # Can't see tenant1's data in tenant2's schema
                     self.assertEqual(DummyModel.objects.count(), 0)
 
-                # Back to tenant1
-                self.assertEqual(connection.schema_name, 'nested1')
+                # Back to tenant1 on all databases
+                for db_alias in tenant_dbs:
+                    self.assertEqual(connections[db_alias].schema_name, 'nested1')
                 # Can see tenant1's data again
                 self.assertEqual(DummyModel.objects.count(), 1)
 
-            # Back to public
-            self.assertEqual(connection.schema_name, public_schema)
+            # Back to public on all databases
+            for db_alias in tenant_dbs:
+                self.assertEqual(connections[db_alias].schema_name, public_schema)
         finally:
             domain1.delete()
             tenant1.delete(force_drop=True)
             domain2.delete()
             tenant2.delete(force_drop=True)
+
+    def test_schema_context_switches_all_databases(self):
+        """
+        Should switch ALL tenant databases when entering schema context.
+
+        schema_context() now operates on all databases with the django-tenants
+        engine for consistency. It should switch ALL tenant databases to the
+        specified schema simultaneously.
+        """
+        from django_tenants.utils import schema_context
+
+        tenant = get_tenant_model()(schema_name='schema_ctx_test')
+        tenant.save()
+        domain = get_tenant_domain_model()(tenant=tenant, domain='schemactx.test.com')
+        domain.save()
+
+        try:
+            # Start in public schema on all databases
+            get_tenant_model().deactivate()
+            public_schema = get_public_schema_name()
+
+            tenant_dbs = get_tenant_database_aliases()
+
+            # Verify all databases start on public schema
+            for db_alias in tenant_dbs:
+                self.assertEqual(connections[db_alias].schema_name, public_schema)
+
+            # Enter schema context
+            with schema_context('schema_ctx_test'):
+                # Verify ALL databases are on the schema
+                for db_alias in tenant_dbs:
+                    self.assertEqual(
+                        connections[db_alias].schema_name,
+                        'schema_ctx_test',
+                        f"Database {db_alias} should be on schema inside context"
+                    )
+
+            # Verify ALL databases are back to public schema
+            for db_alias in tenant_dbs:
+                self.assertEqual(
+                    connections[db_alias].schema_name,
+                    public_schema,
+                    f"Database {db_alias} should be back on public schema after context"
+                )
+        finally:
+            domain.delete()
+            tenant.delete(force_drop=True)
+
+    def test_tenant_context_database_parameter_deprecated(self):
+        """
+        Should emit deprecation warning when database parameter is used.
+
+        The database parameter for tenant_context() is deprecated because
+        tenant_context() now operates on all tenant databases for consistency.
+        """
+        tenant = get_tenant_model()(schema_name='deprecation_test')
+        tenant.save()
+        domain = get_tenant_domain_model()(tenant=tenant, domain='deprecation.test.com')
+        domain.save()
+
+        try:
+            # Using database parameter should emit deprecation warning
+            import warnings
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                with tenant_context(tenant, database='default'):
+                    pass
+
+                # Should have captured deprecation warning
+                self.assertEqual(len(w), 1)
+                self.assertTrue(issubclass(w[0].category, DeprecationWarning))
+                self.assertIn("database", str(w[0].message).lower())
+                self.assertIn("deprecated", str(w[0].message).lower())
+        finally:
+            domain.delete()
+            tenant.delete(force_drop=True)
+
+    def test_schema_context_database_parameter_deprecated(self):
+        """
+        Should emit deprecation warning when database parameter is used.
+
+        The database parameter for schema_context() is deprecated because
+        schema_context() now operates on all tenant databases for consistency.
+        """
+        from django_tenants.utils import schema_context
+
+        tenant = get_tenant_model()(schema_name='deprecation_schema_test')
+        tenant.save()
+        domain = get_tenant_domain_model()(tenant=tenant, domain='deprecation-schema.test.com')
+        domain.save()
+
+        try:
+            # Using database parameter should emit deprecation warning
+            import warnings
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                with schema_context('deprecation_schema_test', database='default'):
+                    pass
+
+                # Should have captured deprecation warning
+                self.assertEqual(len(w), 1)
+                self.assertTrue(issubclass(w[0].category, DeprecationWarning))
+                self.assertIn("database", str(w[0].message).lower())
+                self.assertIn("deprecated", str(w[0].message).lower())
+        finally:
+            domain.delete()
+            tenant.delete(force_drop=True)
 
 
 class ConcurrentOperationsIntegrationTest(TransactionTestCase):

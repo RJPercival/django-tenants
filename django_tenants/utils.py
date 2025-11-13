@@ -138,42 +138,127 @@ def get_tenant_migration_order():
     return getattr(settings, 'TENANT_MIGRATION_ORDER', None)
 
 
+def _restore_tenant_state_on_all_databases(previous_tenant_dict):
+    """
+    Restore previous tenant state for all databases.
+
+    This helper is used by both TenantMixin and schema_context to restore
+    the schema state when exiting a context manager. It implements the
+    common restoration logic to avoid duplication.
+
+    Args:
+        previous_tenant_dict: Dict of {db_alias: [previous_tenant_stack]}
+                              where each database alias maps to a list
+                              (stack) of previous tenant objects
+    """
+    for db_alias in get_tenant_database_aliases():
+        if db_alias in previous_tenant_dict and previous_tenant_dict[db_alias]:
+            previous = previous_tenant_dict[db_alias].pop()
+            conn = connections[db_alias]
+            if previous is None:
+                conn.set_schema_to_public()
+            else:
+                conn.set_tenant(previous)
+
+
 class schema_context(ContextDecorator):
-    # Please do not try and merge this with tenant_context as they are not the same. As pointed out in #501
+    """
+    Context manager for switching to a schema across all tenant databases.
+
+    Switches ALL databases with the django-tenants engine to the specified schema.
+    When the context exits, restores the previous schema on all databases.
+    Supports nesting - each exit restores the schema that was active when that
+    context was entered.
+
+    Usage:
+        with schema_context('tenant_schema'):
+            # All tenant databases are now on tenant_schema
+            Model.objects.all()  # Queries tenant_schema on appropriate database
+        # All databases restored to previous schema
+
+    Args:
+        schema_name: Name of the schema to switch to
+        database: DEPRECATED. This parameter is ignored. All tenant databases
+                  are always switched for consistency and safety.
+
+    Note: Please do not try and merge this with tenant_context as they are
+    not the same, as pointed out in #501.
+    """
     def __init__(self, *args, **kwargs):
         self.schema_name = args[0]
-        self.database = kwargs.get("database", get_tenant_database_alias())
+        self._previous_tenant = {}  # Dict of {db_alias: [previous_tenant, ...]}
+
+        # Deprecation warning for database parameter
+        if 'database' in kwargs:
+            import warnings
+            warnings.warn(
+                "The 'database' parameter for schema_context() is deprecated. "
+                "schema_context() now operates on all tenant databases for consistency. "
+                "This parameter is ignored.",
+                DeprecationWarning,
+                stacklevel=2
+            )
         super().__init__()
 
     def __enter__(self):
-        self.connection = connections[self.database]
-        self.previous_tenant = connection.tenant
-        self.connection.set_schema(self.schema_name)
+        # Save previous tenant for each database and switch to new schema
+        for db_alias in get_tenant_database_aliases():
+            if db_alias not in self._previous_tenant:
+                self._previous_tenant[db_alias] = []
+            conn = connections[db_alias]
+            self._previous_tenant[db_alias].append(conn.tenant)
+            conn.set_schema(self.schema_name)
 
     def __exit__(self, *exc):
-        if self.previous_tenant is None:
-            self.connection.set_schema_to_public()
-        else:
-            self.connection.set_tenant(self.previous_tenant)
+        # Restore previous tenant for each database using shared helper
+        _restore_tenant_state_on_all_databases(self._previous_tenant)
 
 
 class tenant_context(ContextDecorator):
-    # Please do not try and merge this with schema_context as they are not the same. As pointed out in #501
+    """
+    Context manager for switching to a tenant across all tenant databases.
+
+    This is a convenience wrapper around the tenant's built-in context manager.
+    Switches ALL databases with the django-tenants engine to the specified tenant.
+    When the context exits, restores the previous tenant on all databases.
+    Supports nesting - each exit restores the tenant that was active when that
+    context was entered.
+
+    Usage:
+        with tenant_context(tenant):
+            # All tenant databases are now on tenant's schema
+            Model.objects.all()  # Queries tenant's schema on appropriate database
+        # All databases restored to previous tenant/schema
+
+    Args:
+        tenant: The tenant object to switch to
+
+    Note: Please do not try and merge this with schema_context as they are not
+    the same, as pointed out in #501. While they both switch schemas, tenant_context
+    works with tenant objects and schema_context works with schema names directly.
+    """
     def __init__(self, *args, **kwargs):
         self.tenant = args[0]
-        self.database = kwargs.get("database", get_tenant_database_alias())
+
+        # Deprecation warning for database parameter
+        if 'database' in kwargs:
+            import warnings
+            warnings.warn(
+                "The 'database' parameter for tenant_context() is deprecated. "
+                "tenant_context() now operates on all tenant databases for consistency. "
+                "This parameter is ignored.",
+                DeprecationWarning,
+                stacklevel=2
+            )
         super().__init__()
 
     def __enter__(self):
-        self.connection = connections[self.database]
-        self.previous_tenant = connection.tenant
-        self.connection.set_tenant(self.tenant)
+        # Delegate to the tenant's context manager
+        return self.tenant.__enter__()
 
     def __exit__(self, *exc):
-        if self.previous_tenant is None:
-            self.connection.set_schema_to_public()
-        else:
-            self.connection.set_tenant(self.previous_tenant)
+        # Delegate to the tenant's context manager
+        return self.tenant.__exit__(*exc)
 
 
 def clean_tenant_url(url_string):

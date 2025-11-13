@@ -97,15 +97,9 @@ class TenantMixin(models.Model):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Restore previous tenant for each database
-        for db_alias in get_tenant_database_aliases():
-            if db_alias in self._previous_tenant and self._previous_tenant[db_alias]:
-                previous = self._previous_tenant[db_alias].pop()
-                conn = connections[db_alias]
-                if previous is None:
-                    conn.set_schema_to_public()
-                else:
-                    conn.set_tenant(previous)
+        # Restore previous tenant for each database using shared helper
+        from django_tenants.utils import _restore_tenant_state_on_all_databases
+        _restore_tenant_state_on_all_databases(self._previous_tenant)
 
     def activate(self):
         """
