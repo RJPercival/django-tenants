@@ -822,3 +822,154 @@ class FailureModeIntegrationTest(BaseTestCase):
             # Cleanup
             get_tenant_model().deactivate()
             temp_tenant.delete(force_drop=True)
+
+    def test_schema_creation_handles_partial_database_failure(self):
+        """
+        Should handle gracefully when schema creation fails on one database.
+
+        When schema creation fails on one of the tenant databases, the system
+        should propagate the error with clear information about which database
+        failed, helping operators diagnose and resolve the issue.
+        """
+        from django.db import connections
+        from django.db.utils import DatabaseError
+
+        tenant_dbs = get_all_tenant_databases()
+        if len(tenant_dbs) < 2:
+            self.skipTest("Need multiple databases to test partial failure")
+
+        tenant = get_tenant_model()(schema_name='partial_failure_test')
+        tenant.auto_create_schema = False
+        tenant.save()
+
+        # Create a wrapper that fails CREATE SCHEMA on 'other' database
+        def failing_wrapper(execute, sql, params, many, context):
+            connection = context['connection']
+            if connection.alias == 'other' and 'CREATE SCHEMA' in sql.upper():
+                raise DatabaseError(f"Simulated failure on database '{connection.alias}'")
+            return execute(sql, params, many, context)
+
+        try:
+            # Wrap 'other' database to simulate failure
+            with connections['other'].execute_wrapper(failing_wrapper):
+                with self.assertRaises(DatabaseError) as cm:
+                    tenant.create_schema(sync_schema=True, verbosity=0)
+
+                # Error should mention the failing database
+                error_msg = str(cm.exception).lower()
+                self.assertTrue(
+                    'other' in error_msg or 'simulated' in error_msg,
+                    f"Error should identify failing database. Got: {cm.exception}"
+                )
+        finally:
+            # Cleanup - schemas may be partially created
+            tenant.delete(force_drop=True)
+
+    def test_schema_operations_with_connection_failure(self):
+        """
+        Should provide clear error when database connection fails.
+
+        When a database is unreachable during schema operations, the error
+        should clearly indicate the connection problem and which database
+        is affected.
+        """
+        from django.db import connections
+        from django.db.utils import OperationalError
+
+        tenant_dbs = get_all_tenant_databases()
+        if len(tenant_dbs) < 2:
+            self.skipTest("Need multiple databases to test connection failure")
+
+        tenant = get_tenant_model()(schema_name='connection_failure_test')
+        tenant.auto_create_schema = False
+        tenant.save()
+
+        # Create a wrapper that simulates connection failure
+        def connection_failure_wrapper(execute, sql, params, many, context):
+            connection = context['connection']
+            if connection.alias == 'other':
+                raise OperationalError(
+                    f"could not connect to server on database '{connection.alias}': "
+                    "Connection refused"
+                )
+            return execute(sql, params, many, context)
+
+        try:
+            # Wrap 'other' database to simulate connection failure
+            with connections['other'].execute_wrapper(connection_failure_wrapper):
+                with self.assertRaises(OperationalError) as cm:
+                    tenant.create_schema(sync_schema=True, verbosity=0)
+
+                # Error should mention connection problem
+                error_msg = str(cm.exception).lower()
+                self.assertTrue(
+                    'connection' in error_msg or 'connect' in error_msg,
+                    f"Error should indicate connection problem. Got: {cm.exception}"
+                )
+                self.assertIn('other', error_msg,
+                            f"Error should identify problematic database. Got: {cm.exception}")
+        finally:
+            # Cleanup
+            tenant.delete(force_drop=True)
+
+    def test_concurrent_schema_operations_are_safe(self):
+        """
+        Should handle concurrent schema operations safely.
+
+        When multiple processes attempt schema operations simultaneously,
+        the system should either succeed atomically or fail with clear
+        errors, without leaving databases in inconsistent states.
+        """
+        import threading
+        from django.db import connections
+
+        tenant = get_tenant_model()(schema_name='concurrent_ops_test')
+        tenant.auto_create_schema = False
+        tenant.save()
+
+        results = {'errors': [], 'success': []}
+
+        def attempt_create_schema(thread_id):
+            try:
+                tenant.create_schema(sync_schema=True, check_if_exists=True, verbosity=0)
+                results['success'].append(thread_id)
+            except Exception as e:
+                results['errors'].append((thread_id, str(e)))
+
+        try:
+            # Start multiple threads trying to create schema simultaneously
+            threads = [
+                threading.Thread(target=attempt_create_schema, args=(i,))
+                for i in range(3)
+            ]
+
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            # At least one should succeed (or all if check_if_exists works correctly)
+            self.assertGreater(
+                len(results['success']),
+                0,
+                "At least one schema creation should succeed"
+            )
+
+            # Verify schema actually exists on all databases
+            tenant_dbs = get_all_tenant_databases()
+            for db_alias in tenant_dbs:
+                self.assertTrue(
+                    schema_exists('concurrent_ops_test', database=db_alias),
+                    f"Schema should exist on {db_alias} after concurrent operations"
+                )
+
+            # Any errors should be about schema already existing, not corruption
+            for thread_id, error_msg in results['errors']:
+                error_lower = error_msg.lower()
+                # Acceptable errors: schema exists, or benign race conditions
+                # Unacceptable: database corruption, constraint violations
+                if 'exists' not in error_lower:
+                    self.fail(f"Thread {thread_id} had unexpected error: {error_msg}")
+        finally:
+            # Cleanup
+            tenant.delete(force_drop=True)

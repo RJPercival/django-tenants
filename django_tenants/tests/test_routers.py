@@ -137,3 +137,77 @@ class MultiDatabaseRouterTestCase(BaseTestCase):
         # Should return False for non-tenant database
         self.assertFalse(result,
                         "Router should not allow migrations on non-tenant database")
+
+    def test_allow_migrate_with_no_active_tenant(self):
+        """
+        Should handle queries appropriately when no tenant is active.
+
+        When allow_migrate is called with no active tenant (connection.tenant is None),
+        the router should still make appropriate routing decisions based on the
+        schema (public vs tenant) and app type.
+        """
+        router = TenantSyncRouter()
+
+        # Ensure no tenant is active on any database
+        get_tenant_model().deactivate()
+
+        # In public schema with no active tenant, SHARED_APPS should be allowed
+        result = router.allow_migrate('default', 'django_tenants')
+        self.assertIsNone(result,
+                        "Router should allow SHARED_APP migrations in public schema even with no active tenant")
+
+        # TENANT_APPS should not be allowed in public schema, even with no tenant
+        result = router.allow_migrate('default', 'dts_test_app')
+        self.assertFalse(result,
+                       "Router should not allow TENANT_APP migrations in public schema")
+
+    def test_allow_migrate_with_unknown_app_label(self):
+        """
+        Should raise LookupError for apps not in Django's app registry.
+
+        When allow_migrate is called with an app that doesn't exist in Django's
+        app registry, the router currently raises a LookupError. This behavior
+        prevents migrations for misconfigured or typo'd app names.
+
+        Note: This documents current behavior. Future enhancement could be to
+        return None instead, allowing Django's default routing to handle it.
+        """
+        router = TenantSyncRouter()
+
+        # Activate a tenant
+        self.tenant.activate()
+
+        # Test with an app that doesn't exist in Django's app registry
+        with self.assertRaises(LookupError) as cm:
+            router.allow_migrate('default', 'nonexistent_app', model_name='FakeModel')
+
+        # Error should mention the app doesn't exist
+        self.assertIn('nonexistent_app', str(cm.exception))
+
+    def test_allow_migrate_with_none_model_name(self):
+        """
+        Should handle None model_name gracefully.
+
+        When allow_migrate is called without a model_name (model_name=None),
+        which can happen in some Django operations, the router should still
+        make appropriate routing decisions based on app_label alone.
+        """
+        router = TenantSyncRouter()
+
+        # Activate a tenant
+        self.tenant.activate()
+
+        # Test with TENANT_APP but no model_name
+        result = router.allow_migrate('default', 'dts_test_app', model_name=None)
+        # Should still allow migrations for TENANT_APP in tenant schema
+        self.assertIsNone(result,
+                        "Router should handle None model_name gracefully for TENANT_APPS")
+
+        # Deactivate and test in public schema
+        get_tenant_model().deactivate()
+
+        # Test with SHARED_APP but no model_name
+        result = router.allow_migrate('default', 'django_tenants', model_name=None)
+        # Should allow migrations for SHARED_APP in public schema
+        self.assertIsNone(result,
+                        "Router should handle None model_name gracefully for SHARED_APPS")
