@@ -45,7 +45,6 @@ class MultiTypeTestCase(BaseTestCase):
         for schema in tenant_types:
             installed_apps += [app for app in tenant_types[schema]["APPS"] if app not in installed_apps]
         settings.INSTALLED_APPS = installed_apps
-        cls.available_apps = settings.INSTALLED_APPS
         cls.sync_shared()
 
     @classmethod

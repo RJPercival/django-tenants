@@ -17,7 +17,6 @@ class RoutesTestCase(BaseTestCase):
                                 'django.contrib.contenttypes',
                                 'django.contrib.auth', )
         settings.INSTALLED_APPS = settings.SHARED_APPS + settings.TENANT_APPS
-        cls.available_apps = settings.INSTALLED_APPS
         cls.sync_shared()
         cls.public_tenant = get_tenant_model()(schema_name=get_public_schema_name())
         cls.public_tenant.save()
@@ -95,7 +94,6 @@ class SubfolderRoutesTestCase(BaseTestCase):
                                 'django.contrib.contenttypes',
                                 'django.contrib.auth', )
         settings.INSTALLED_APPS = settings.SHARED_APPS + settings.TENANT_APPS
-        cls.available_apps = settings.INSTALLED_APPS
         settings.TENANT_SUBFOLDER_PREFIX = 'clients/'
 
     def setUp(self):

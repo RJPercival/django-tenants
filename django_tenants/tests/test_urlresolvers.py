@@ -21,7 +21,6 @@ class URLResolversTestCase(BaseTestCase):
         )
         settings.INSTALLED_APPS = settings.SHARED_APPS + settings.TENANT_APPS
         settings.TENANT_SUBFOLDER_PREFIX = "clients/"
-        cls.available_apps = settings.INSTALLED_APPS
 
         def reverser_func(self, name, tenant):
             """
@@ -41,6 +40,8 @@ class URLResolversTestCase(BaseTestCase):
     def setUp(self):
         self.sync_shared()
         super().setUp()
+        # Reset all tenant databases to public schema (this test uses databases='__all__')
+        get_tenant_model().deactivate()
         for i in range(1, 4):
             schema_name = "tenant{}".format(i)
             tenant = get_tenant_model()(schema_name=schema_name)
@@ -49,9 +50,8 @@ class URLResolversTestCase(BaseTestCase):
             domain.save()
 
     def tearDown(self):
-        from django.db import connection
-
-        connection.set_schema_to_public()
+        # Reset all tenant databases to public schema
+        get_tenant_model().deactivate()
         for domain in get_tenant_domain_model().objects.all():
             domain.delete()
         for tenant in get_tenant_model().objects.all():

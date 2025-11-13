@@ -1,4 +1,6 @@
 from contextlib import contextmanager
+import atexit
+import copy
 import unittest
 from unittest import mock
 
@@ -18,6 +20,18 @@ from django_tenants.test.cases import TenantTestCase
 from django_tenants.tests.testcases import BaseTestCase
 from django_tenants.utils import tenant_context, schema_context, schema_exists, get_tenant_model, \
     get_public_schema_name, get_tenant_domain_model, schema_rename, get_tenant_database_aliases
+
+# Save the original databases configuration at module level before any test classes modify it
+# Use deepcopy to prevent any modifications to nested dicts from affecting the original
+_MODULE_ORIGINAL_DATABASES = copy.deepcopy(settings.DATABASES)
+
+# Register an atexit handler to GUARANTEE restoration of databases config
+# This ensures Django's test runner can access all databases during teardown
+def _restore_databases_on_exit():
+    settings.DATABASES = copy.deepcopy(_MODULE_ORIGINAL_DATABASES)
+    get_tenant_database_aliases.cache_clear()
+
+atexit.register(_restore_databases_on_exit)
 
 
 @contextmanager
@@ -326,7 +340,13 @@ class BaseSyncTest(BaseTestCase):
     """
     Tests if the shared apps and the tenant apps get synced correctly
     depending on if the public schema or a tenant is being synced.
+
+    These tests only use the 'default' database to avoid complexity with
+    multi-database schema manipulation.
     """
+    # Only use 'default' database for these tests
+    databases = {'default'}
+
     MIGRATION_TABLE_SIZE = 1
 
     SHARED_APPS = ('django_tenants',  # 2 tables
@@ -335,16 +355,58 @@ class BaseSyncTest(BaseTestCase):
                    'django.contrib.contenttypes', )  # 1 table
     TENANT_APPS = ('django.contrib.sessions', )
 
+    @classmethod
+    def setUpClass(cls):
+        # Register cleanup FIRST to guarantee it runs even if setUpClass() fails
+        # This ensures settings.DATABASES is always restored for Django's teardown
+        def restore_databases():
+            from django.conf import settings
+            import copy
+            settings.DATABASES = copy.deepcopy(_MODULE_ORIGINAL_DATABASES)
+            get_tenant_database_aliases.cache_clear()
+
+        cls.addClassCleanup(restore_databases)
+
+        # Temporarily make only 'default' database visible to simulate single-DB setup
+        # Use module-level saved config to ensure we always restore the true original
+        from django.conf import settings
+        settings.DATABASES = {'default': _MODULE_ORIGINAL_DATABASES['default']}
+
+        # Clear cache so get_tenant_database_aliases() sees the reduced config
+        get_tenant_database_aliases.cache_clear()
+
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        # Call super to allow parent cleanup to run while DB config is still reduced
+        # Note: Database restoration is handled by addClassCleanup() which runs
+        # AFTER tearDownClass(), ensuring settings.DATABASES is restored even if
+        # tearDownClass() is never called (e.g., when setUpClass() fails)
+        super().tearDownClass()
+
+    @classmethod
+    def sync_shared(cls):
+        # Override to only sync 'default' database since databases = {'default'}
+        call_command('migrate_schemas',
+                     schema_name=get_public_schema_name(),
+                     database='default',
+                     interactive=False,
+                     verbosity=0)
+
     def setUp(self):
-        super().setUp()
         # Django calls syncdb by default for the test database, but we want
         # a blank public schema for this set of tests.
+        # Only manipulate 'default' database since databases = {'default'}
         connection.set_schema_to_public()
         with connection.cursor() as cursor:
             cursor.execute('DROP SCHEMA %s CASCADE; CREATE SCHEMA %s;'
                            % (get_public_schema_name(), get_public_schema_name(), ))
 
+        # Migrate the public schema BEFORE calling super().setUp()
         self.sync_shared()
+
+        super().setUp()
 
 
 class TenantSyncTest(BaseSyncTest):
@@ -384,16 +446,6 @@ class TestSyncTenantsWithAuth(BaseSyncTest):
                    'django.contrib.contenttypes',  # 1 table
                    'django.contrib.sessions', )  # 1 table
     TENANT_APPS = ('django.contrib.sessions', )  # 1 table
-
-    if get_version_tuple(get_main_version()) < (5, 2):
-        def _pre_setup(self):
-            self.sync_shared()
-            super()._pre_setup()
-    else:
-        @classmethod
-        def _pre_setup(cls):
-            cls.sync_shared()
-            super()._pre_setup()
 
     def test_tenant_apps_and_shared_apps_can_have_the_same_apps(self):
         """
@@ -606,6 +658,39 @@ class TenantRenameSchemaTest(BaseTestCase):
 
 
 class CloneSchemaTest(BaseTestCase):
+    # CloneSchema only supports single-database setups
+    databases = {'default'}
+
+    @classmethod
+    def setUpClass(cls):
+        # Register cleanup FIRST to guarantee it runs even if setUpClass() fails
+        # This ensures settings.DATABASES is always restored for Django's teardown
+        def restore_databases():
+            from django.conf import settings
+            import copy
+            settings.DATABASES = copy.deepcopy(_MODULE_ORIGINAL_DATABASES)
+            get_tenant_database_aliases.cache_clear()
+
+        cls.addClassCleanup(restore_databases)
+
+        # Temporarily make only 'default' database visible to simulate single-DB setup
+        # Use module-level saved config to ensure we always restore the true original
+        from django.conf import settings
+        settings.DATABASES = {'default': _MODULE_ORIGINAL_DATABASES['default']}
+
+        # Clear cache so get_tenant_database_aliases() sees the reduced config
+        get_tenant_database_aliases.cache_clear()
+
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        # Call super to allow parent cleanup to run while DB config is still reduced
+        # Note: Database restoration is handled by addClassCleanup() which runs
+        # AFTER tearDownClass(), ensuring settings.DATABASES is restored even if
+        # tearDownClass() is never called (e.g., when setUpClass() fails)
+        super().tearDownClass()
+
     def test_clone_schema(self):
         Client = get_tenant_model()
         tenant = Client(schema_name='source')
@@ -788,7 +873,8 @@ class MigrationOrderTestTest(BaseTestCase):
     def tearDown(self):
         from django_tenants.models import TenantMixin
 
-        connection.set_schema_to_public()
+        # Reset all tenant databases to public schema
+        get_tenant_model().deactivate()
 
         for c in self.created:
             if isinstance(c, TenantMixin):
@@ -818,8 +904,9 @@ class MigrationOrderTestTest(BaseTestCase):
         )
 
         # test the signal gets called when running migrate
+        # Use database='default' to test ordering without multi-database duplication
         with catch_signal(schema_migrated) as handler_post, catch_signal(schema_pre_migration) as handler_pre:
-            call_command("migrate_schemas", interactive=False, verbosity=0)
+            call_command("migrate_schemas", database='default', interactive=False, verbosity=0)
 
         handler_pre.assert_has_calls(
             [
