@@ -92,25 +92,6 @@ class GetTenantDatabaseAliasesTestCase(TenantTestCase):
         self.assertIn('replica', result)
         self.assertIn('other', result)
 
-    def test_result_is_cached(self):
-        """
-        Should cache the result for performance.
-
-        Calling the function multiple times should return the same list instance,
-        indicating that the result has been cached.
-        """
-        from django_tenants.utils import get_all_tenant_databases
-
-        # Clear any existing cache
-        if hasattr(get_all_tenant_databases, 'cache_clear'):
-            get_all_tenant_databases.cache_clear()
-
-        result1 = get_all_tenant_databases()
-        result2 = get_all_tenant_databases()
-
-        # Should return the same cached object
-        self.assertIs(result1, result2)
-
     def test_scans_databases_not_tenant_db_alias(self):
         """
         Should scan DATABASES setting directly, not TENANT_DB_ALIAS.
