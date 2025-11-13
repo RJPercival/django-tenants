@@ -103,7 +103,13 @@ class TenantMixin(models.Model):
 
     def activate(self):
         """
-        Syntax sugar that helps at django shell with fast tenant changing
+        Activate this tenant on all tenant databases.
+
+        Switches ALL tenant databases to this tenant's schema. This is syntax
+        sugar for quickly changing tenants at the Django shell or in code.
+
+        In multi-database setups, this ensures all databases with the
+        django-tenants engine are switched to this tenant's schema atomically.
 
         Usage:
             Tenant.objects.get(schema_name='test').activate()
@@ -115,7 +121,13 @@ class TenantMixin(models.Model):
     @classmethod
     def deactivate(cls):
         """
-        Syntax sugar, return to public schema
+        Deactivate tenants on all tenant databases, returning to public schema.
+
+        Switches ALL tenant databases back to the public schema. This is syntax
+        sugar for returning to the public schema at the Django shell or in code.
+
+        In multi-database setups, this ensures all databases with the
+        django-tenants engine are switched to the public schema atomically.
 
         Usage:
             test_tenant.deactivate()
