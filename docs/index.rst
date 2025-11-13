@@ -71,9 +71,10 @@ Contents
 
 .. toctree::
    :maxdepth: 2
-   
+
    install
    use
+   multidb
    examples
    files
    test
