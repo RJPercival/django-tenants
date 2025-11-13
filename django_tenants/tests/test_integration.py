@@ -96,6 +96,13 @@ class ReadReplicaIntegrationTest(BaseTestCase):
                     tenant,
                     f"Database {db_alias} should have tenant object set"
                 )
+
+            # Also verify that operations actually work after activation
+            # This tests the real behavior users care about, not just internal state
+            DummyModel(name='activation_test_data').save()
+            retrieved = DummyModel.objects.get(name='activation_test_data')
+            self.assertEqual(retrieved.name, 'activation_test_data',
+                           "Should be able to create and retrieve tenant data after activation")
         finally:
             get_tenant_model().deactivate()
             domain.delete()
@@ -126,6 +133,54 @@ class ReadReplicaIntegrationTest(BaseTestCase):
             get_tenant_model().deactivate()
             domain.delete()
             tenant.delete(force_drop=True)
+
+    def test_tenant_activation_provides_data_isolation(self):
+        """
+        Should isolate tenant data from other tenants and public schema.
+
+        The primary purpose of tenant activation is to ensure data isolation.
+        This test verifies that data created in one tenant's context is not
+        visible in another tenant's context or the public schema.
+        """
+        tenant1 = get_tenant_model()(schema_name='isolation_test1')
+        tenant1.save()
+        domain1 = get_tenant_domain_model()(tenant=tenant1, domain='isolation1.test.com')
+        domain1.save()
+
+        tenant2 = get_tenant_model()(schema_name='isolation_test2')
+        tenant2.save()
+        domain2 = get_tenant_domain_model()(tenant=tenant2, domain='isolation2.test.com')
+        domain2.save()
+
+        try:
+            # Create data in tenant1's context
+            with tenant_context(tenant1):
+                DummyModel(name='tenant1_data').save()
+                self.assertEqual(DummyModel.objects.filter(name='tenant1_data').count(), 1,
+                               "Data should be visible in tenant1's context")
+
+            # Verify data not visible in tenant2's context
+            with tenant_context(tenant2):
+                self.assertEqual(DummyModel.objects.filter(name='tenant1_data').count(), 0,
+                               "Tenant1's data should not be visible in tenant2's context")
+
+            # Verify data not visible in public schema
+            get_tenant_model().deactivate()
+            # DummyModel is a TENANT_APP model, shouldn't have a table in public schema
+            # Attempting to query should raise an exception
+            with self.assertRaises(Exception):
+                DummyModel.objects.count()
+
+            # Verify data IS visible back in tenant1's context
+            with tenant_context(tenant1):
+                self.assertEqual(DummyModel.objects.filter(name='tenant1_data').count(), 1,
+                               "Data should still be visible when returning to tenant1's context")
+        finally:
+            get_tenant_model().deactivate()
+            domain1.delete()
+            tenant1.delete(force_drop=True)
+            domain2.delete()
+            tenant2.delete(force_drop=True)
 
 
 class ShardedScenarioIntegrationTest(BaseTestCase):
@@ -720,3 +775,50 @@ class ValidationIntegrationTest(BaseTestCase):
         finally:
             domain.delete()
             tenant.delete(force_drop=True)
+
+
+class FailureModeIntegrationTest(BaseTestCase):
+    """
+    Integration tests for failure scenarios in multi-database operations.
+
+    Verifies that:
+    - Clear error messages when validation fails
+    - Proper error propagation to users
+    - Graceful handling of inconsistent database states
+    """
+
+    def test_validation_error_messages_identify_problematic_database(self):
+        """
+        Should clearly identify which database is in wrong state during validation.
+
+        When save() validation fails because a database is on the wrong schema,
+        the error message should explicitly name the problematic database(s)
+        to aid in troubleshooting.
+        """
+        tenant_dbs = get_all_tenant_databases()
+        if len(tenant_dbs) < 2:
+            self.skipTest("Need multiple databases to test validation")
+
+        # Create a temporary tenant
+        temp_tenant = get_tenant_model()(schema_name='temp_validation')
+        temp_tenant.save()
+
+        try:
+            # Activate on only one database (creating inconsistent state)
+            connections['other'].set_tenant(temp_tenant)
+
+            # Try to create a new tenant - should fail with clear error
+            new_tenant = get_tenant_model()(schema_name='validation_error_test')
+            with self.assertRaises(Exception) as cm:
+                new_tenant.save()
+
+            # Error message should identify 'other' database
+            error_msg = str(cm.exception).lower()
+            self.assertIn("can't create tenant outside the public schema", error_msg,
+                        "Should have validation error message")
+            self.assertIn('other', error_msg,
+                        f"Error should identify problematic database. Got: {cm.exception}")
+        finally:
+            # Cleanup
+            get_tenant_model().deactivate()
+            temp_tenant.delete(force_drop=True)

@@ -38,9 +38,8 @@ class MultiDatabaseRouterTestCase(BaseTestCase):
 
     @classmethod
     def tearDownClass(cls):
-        # Switch to public schema before cleanup
-        from django.db import connection
-        connection.set_schema_to_public()
+        # Switch to public schema before cleanup on ALL databases
+        get_tenant_model().deactivate()
 
         cls.domain.delete()
         cls.tenant.delete(force_drop=True)

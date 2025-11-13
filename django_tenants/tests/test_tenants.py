@@ -82,7 +82,8 @@ class TenantDataAndSettingsTest(BaseTestCase):
     def tearDown(self):
         from django_tenants.models import TenantMixin
 
-        connection.set_schema_to_public()
+        # Deactivate tenant on ALL databases, not just 'default'
+        get_tenant_model().deactivate()
 
         for c in self.created:
             if isinstance(c, TenantMixin):
@@ -749,7 +750,8 @@ class SchemaMigratedSignalTest(BaseTestCase):
     def tearDown(self):
         from django_tenants.models import TenantMixin
 
-        connection.set_schema_to_public()
+        # Deactivate tenant on ALL databases, not just 'default'
+        get_tenant_model().deactivate()
 
         for c in self.created:
             if isinstance(c, TenantMixin):
@@ -1210,7 +1212,7 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
                               f"Schema should exist on {db_alias} before drop")
 
             # Drop the schema from all databases
-            connection.set_schema_to_public()
+            get_tenant_model().deactivate()
             tenant._drop_schema(force_drop=True)
 
             # Verify schema no longer exists on any tenant database
@@ -1418,7 +1420,7 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
 
         finally:
             # Cleanup
-            connection.set_schema_to_public()
+            get_tenant_model().deactivate()
             # Drop schemas manually from all databases
             for db_alias in non_mirrored_dbs:
                 try:

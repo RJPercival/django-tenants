@@ -51,7 +51,8 @@ class MultiTypeTestCase(BaseTestCase):
     def tearDownClass(cls):
         from django.db import connection
 
-        connection.set_schema_to_public()
+        # Deactivate tenant on ALL databases, not just 'default'
+        get_tenant_model().deactivate()
         delattr(settings, 'HAS_MULTI_TYPE_TENANTS')
         delattr(settings, 'MULTI_TYPE_DATABASE_FIELD')
         delattr(settings, 'TENANT_TYPES')
@@ -83,7 +84,8 @@ class MultiTypeTestCase(BaseTestCase):
 
     def tearDown(self):
         from django.db import connection
-        connection.set_schema_to_public()
+        # Deactivate tenant on ALL databases, not just 'default'
+        get_tenant_model().deactivate()
 
         self.domain.delete()
         self.tenant.delete(force_drop=True)

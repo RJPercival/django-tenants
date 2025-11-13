@@ -25,9 +25,8 @@ class RoutesTestCase(BaseTestCase):
 
     @classmethod
     def tearDownClass(cls):
-        from django.db import connection
-
-        connection.set_schema_to_public()
+        # Deactivate tenant on ALL databases, not just 'default'
+        get_tenant_model().deactivate()
 
         cls.public_domain.delete()
         cls.public_tenant.delete()
@@ -46,9 +45,8 @@ class RoutesTestCase(BaseTestCase):
         self.domain.save()
 
     def tearDown(self):
-        from django.db import connection
-
-        connection.set_schema_to_public()
+        # Deactivate tenant on ALL databases, not just 'default'
+        get_tenant_model().deactivate()
 
         self.domain.delete()
         self.tenant.delete(force_drop=True)
@@ -114,9 +112,8 @@ class SubfolderRoutesTestCase(BaseTestCase):
         self.domain.save()
 
     def tearDown(self):
-        from django.db import connection
-
-        connection.set_schema_to_public()
+        # Deactivate tenant on ALL databases, not just 'default'
+        get_tenant_model().deactivate()
 
         self.domain.delete()
         self.tenant.delete(force_drop=True)
