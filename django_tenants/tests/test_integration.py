@@ -17,7 +17,7 @@ from django.test import TransactionTestCase
 from django_tenants.tests.testcases import BaseTestCase
 from django_tenants.utils import (
     get_public_schema_name,
-    get_tenant_database_aliases,
+    get_all_tenant_databases,
     get_tenant_model,
     get_tenant_domain_model,
     schema_exists,
@@ -51,7 +51,7 @@ class ReadReplicaIntegrationTest(BaseTestCase):
 
         try:
             # Verify schema exists on all non-mirror databases
-            tenant_dbs = get_tenant_database_aliases()
+            tenant_dbs = get_all_tenant_databases()
             non_mirror_dbs = [
                 db for db in tenant_dbs
                 if not settings.DATABASES.get(db, {}).get('TEST', {}).get('MIRROR')
@@ -83,7 +83,7 @@ class ReadReplicaIntegrationTest(BaseTestCase):
             tenant.activate()
 
             # Verify all databases have the tenant schema set
-            tenant_dbs = get_tenant_database_aliases()
+            tenant_dbs = get_all_tenant_databases()
             for db_alias in tenant_dbs:
                 conn = connections[db_alias]
                 self.assertEqual(
@@ -152,7 +152,7 @@ class ShardedScenarioIntegrationTest(BaseTestCase):
 
         try:
             # Verify schema exists on all non-mirror databases
-            tenant_dbs = get_tenant_database_aliases()
+            tenant_dbs = get_all_tenant_databases()
             non_mirror_dbs = [
                 db for db in tenant_dbs
                 if not settings.DATABASES.get(db, {}).get('TEST', {}).get('MIRROR')
@@ -190,7 +190,7 @@ class ShardedScenarioIntegrationTest(BaseTestCase):
             tenant.activate()
 
             # Verify all distinct shard databases have the tenant schema set
-            tenant_dbs = get_tenant_database_aliases()
+            tenant_dbs = get_all_tenant_databases()
             non_mirror_dbs = [
                 db for db in tenant_dbs
                 if not settings.DATABASES.get(db, {}).get('TEST', {}).get('MIRROR')
@@ -234,7 +234,7 @@ class TenantLifecycleIntegrationTest(BaseTestCase):
 
         try:
             # Verify schema exists on all non-mirror databases
-            tenant_dbs = get_tenant_database_aliases()
+            tenant_dbs = get_all_tenant_databases()
             non_mirror_dbs = [
                 db for db in tenant_dbs
                 if not settings.DATABASES.get(db, {}).get('TEST', {}).get('MIRROR')
@@ -262,7 +262,7 @@ class TenantLifecycleIntegrationTest(BaseTestCase):
         domain.save()
 
         # Verify schemas exist
-        tenant_dbs = get_tenant_database_aliases()
+        tenant_dbs = get_all_tenant_databases()
         non_mirror_dbs = [
             db for db in tenant_dbs
             if not settings.DATABASES.get(db, {}).get('TEST', {}).get('MIRROR')
@@ -351,7 +351,7 @@ class ContextManagerIntegrationTest(BaseTestCase):
             public_schema = get_public_schema_name()
 
             # Verify all databases start on public schema
-            tenant_dbs = get_tenant_database_aliases()
+            tenant_dbs = get_all_tenant_databases()
             for db_alias in tenant_dbs:
                 self.assertEqual(connections[db_alias].schema_name, public_schema)
 
@@ -402,7 +402,7 @@ class ContextManagerIntegrationTest(BaseTestCase):
             get_tenant_model().deactivate()
             public_schema = get_public_schema_name()
 
-            tenant_dbs = get_tenant_database_aliases()
+            tenant_dbs = get_all_tenant_databases()
 
             # Outer context: tenant1
             with tenant_context(tenant1):
@@ -456,7 +456,7 @@ class ContextManagerIntegrationTest(BaseTestCase):
             get_tenant_model().deactivate()
             public_schema = get_public_schema_name()
 
-            tenant_dbs = get_tenant_database_aliases()
+            tenant_dbs = get_all_tenant_databases()
 
             # Verify all databases start on public schema
             for db_alias in tenant_dbs:
@@ -670,7 +670,7 @@ class ValidationIntegrationTest(BaseTestCase):
         tenant databases are on the public schema.
         """
         # Set one database to a different schema
-        tenant_dbs = get_tenant_database_aliases()
+        tenant_dbs = get_all_tenant_databases()
         if len(tenant_dbs) < 2:
             self.skipTest("Need multiple databases to test validation")
 
@@ -706,7 +706,7 @@ class ValidationIntegrationTest(BaseTestCase):
 
         # Verify all are on public
         public_schema = get_public_schema_name()
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             self.assertEqual(connections[db_alias].schema_name, public_schema)
 
         # Create tenant should succeed

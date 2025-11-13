@@ -445,11 +445,11 @@ Common Issues
 
     .. code-block:: python
 
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
         from django.db import connections
 
         tenant.activate()
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             conn = connections[db_alias]
             print(f"{db_alias}: {conn.schema_name}")
 
@@ -494,11 +494,11 @@ Check that all tenant schemas exist on all databases:
 
 .. code-block:: python
 
-    from django_tenants.utils import get_tenant_model, get_tenant_database_aliases, schema_exists
+    from django_tenants.utils import get_tenant_model, get_all_tenant_databases, schema_exists
 
     Tenant = get_tenant_model()
     for tenant in Tenant.objects.all():
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             exists = schema_exists(tenant.schema_name, database=db_alias)
             print(f"{tenant.schema_name} on {db_alias}: {exists}")
 
@@ -520,15 +520,25 @@ API Reference
 Utility Functions
 -----------------
 
-``get_tenant_database_aliases()``
+``get_all_tenant_databases()``
     Returns a list of all database aliases that host tenant schemas (i.e., all databases using the django-tenants engine).
 
     .. code-block:: python
 
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
-        tenant_dbs = get_tenant_database_aliases()
+        tenant_dbs = get_all_tenant_databases()
         # ['default', 'replica', 'shard_1', 'shard_2']
+
+``get_primary_tenant_database()``
+    Returns the primary database alias for tenant operations (defaults to 'default').
+
+    .. code-block:: python
+
+        from django_tenants.utils import get_primary_tenant_database
+
+        primary_db = get_primary_tenant_database()
+        # 'default'
 
 ``schema_exists(schema_name, database=...)``
     Check if a schema exists on a specific database.

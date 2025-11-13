@@ -25,21 +25,53 @@ def get_tenant_domain_model():
     return get_model(settings.TENANT_DOMAIN_MODEL)
 
 
-def get_tenant_database_alias():
+def get_primary_tenant_database():
+    """
+    Returns the primary database alias for tenant operations.
+
+    This is the database containing the public schema with tenant metadata
+    (Tenant and Domain models). Typically this is 'default' unless overridden
+    by the TENANT_DB_ALIAS setting.
+
+    Returns:
+        str: Database alias string for the primary tenant database
+
+    Example:
+        >>> from django_tenants.utils import get_primary_tenant_database
+        >>> primary_db = get_primary_tenant_database()
+        >>> print(primary_db)
+        'default'
+    """
     return getattr(settings, 'TENANT_DB_ALIAS', DEFAULT_DB_ALIAS)
 
 
 @lru_cache(maxsize=1)
-def get_tenant_database_aliases():
+def get_all_tenant_databases():
     """
-    Returns a list of all database aliases that should host tenant schemas.
+    Returns all database aliases that host tenant schemas.
 
     Scans settings.DATABASES for all databases using the django-tenants engine
     (django_tenants.postgresql_backend). This enables multi-database support
     where tenant schemas can exist across multiple databases.
 
+    The returned list includes:
+    - The primary database (containing public schema with tenant metadata)
+    - Read replicas (databases mirroring the primary)
+    - Shard databases (separate databases for distributing tenants)
+
     Returns:
         list: A list of database alias strings for databases using django-tenants engine
+
+    Example:
+        >>> from django_tenants.utils import get_all_tenant_databases
+        >>> tenant_dbs = get_all_tenant_databases()
+        >>> print(tenant_dbs)
+        ['default', 'replica', 'shard_1', 'shard_2']
+
+    Note:
+        This function is cached using @lru_cache for performance. If you
+        modify settings.DATABASES at runtime, clear the cache using:
+        get_all_tenant_databases.cache_clear()
     """
     from django.conf import settings
 
@@ -51,6 +83,37 @@ def get_tenant_database_aliases():
             tenant_databases.append(alias)
 
     return tenant_databases
+
+
+# Deprecated aliases - kept for backwards compatibility
+def get_tenant_database_alias():
+    """
+    .. deprecated:: X.X
+        Use :func:`get_primary_tenant_database` instead.
+        This function will be removed in a future version.
+    """
+    import warnings
+    warnings.warn(
+        "get_tenant_database_alias() is deprecated, use get_primary_tenant_database() instead",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    return get_primary_tenant_database()
+
+
+def get_tenant_database_aliases():
+    """
+    .. deprecated:: X.X
+        Use :func:`get_all_tenant_databases` instead.
+        This function will be removed in a future version.
+    """
+    import warnings
+    warnings.warn(
+        "get_tenant_database_aliases() is deprecated, use get_all_tenant_databases() instead",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    return get_all_tenant_databases()
 
 
 def get_public_schema_name():
@@ -151,7 +214,7 @@ def _restore_tenant_state_on_all_databases(previous_tenant_dict):
                               where each database alias maps to a list
                               (stack) of previous tenant objects
     """
-    for db_alias in get_tenant_database_aliases():
+    for db_alias in get_all_tenant_databases():
         if db_alias in previous_tenant_dict and previous_tenant_dict[db_alias]:
             previous = previous_tenant_dict[db_alias].pop()
             conn = connections[db_alias]
@@ -202,7 +265,7 @@ class schema_context(ContextDecorator):
 
     def __enter__(self):
         # Save previous tenant for each database and switch to new schema
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             if db_alias not in self._previous_tenant:
                 self._previous_tenant[db_alias] = []
             conn = connections[db_alias]
@@ -299,7 +362,7 @@ def django_is_in_test_mode():
     return hasattr(mail, 'outbox')
 
 
-def schema_exists(schema_name: str, database: str = get_tenant_database_alias()) -> bool:
+def schema_exists(schema_name: str, database: str = get_primary_tenant_database()) -> bool:
     """
     Check if a schema exists on a specific database.
 
@@ -344,7 +407,7 @@ def schema_exists(schema_name: str, database: str = get_tenant_database_alias())
     return exists
 
 
-def schema_rename(tenant, new_schema_name, database=get_tenant_database_alias(), save=True):
+def schema_rename(tenant, new_schema_name, database=get_primary_tenant_database(), save=True):
     """
     This renames a schema to a new name. It checks to see if it exists first.
 

@@ -4594,8 +4594,8 @@ class CloneSchema:
         NotImplementedError if multiple tenant databases are configured.
         """
         # Check if we're in a multi-database setup
-        from django_tenants.utils import get_tenant_database_aliases
-        tenant_dbs = get_tenant_database_aliases()
+        from django_tenants.utils import get_all_tenant_databases
+        tenant_dbs = get_all_tenant_databases()
         if len(tenant_dbs) > 1:
             raise NotImplementedError(
                 "CloneSchema only supports single-database setups. "

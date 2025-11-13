@@ -19,7 +19,7 @@ from django_tenants.migration_executors import get_executor
 from django_tenants.test.cases import TenantTestCase
 from django_tenants.tests.testcases import BaseTestCase
 from django_tenants.utils import tenant_context, schema_context, schema_exists, get_tenant_model, \
-    get_public_schema_name, get_tenant_domain_model, schema_rename, get_tenant_database_aliases
+    get_public_schema_name, get_tenant_domain_model, schema_rename, get_all_tenant_databases
 
 # Save the original databases configuration at module level before any test classes modify it
 # Use deepcopy to prevent any modifications to nested dicts from affecting the original
@@ -29,7 +29,7 @@ _MODULE_ORIGINAL_DATABASES = copy.deepcopy(settings.DATABASES)
 # This ensures Django's test runner can access all databases during teardown
 def _restore_databases_on_exit():
     settings.DATABASES = copy.deepcopy(_MODULE_ORIGINAL_DATABASES)
-    get_tenant_database_aliases.cache_clear()
+    get_all_tenant_databases.cache_clear()
 
 atexit.register(_restore_databases_on_exit)
 
@@ -363,7 +363,7 @@ class BaseSyncTest(BaseTestCase):
             from django.conf import settings
             import copy
             settings.DATABASES = copy.deepcopy(_MODULE_ORIGINAL_DATABASES)
-            get_tenant_database_aliases.cache_clear()
+            get_all_tenant_databases.cache_clear()
 
         cls.addClassCleanup(restore_databases)
 
@@ -372,8 +372,8 @@ class BaseSyncTest(BaseTestCase):
         from django.conf import settings
         settings.DATABASES = {'default': _MODULE_ORIGINAL_DATABASES['default']}
 
-        # Clear cache so get_tenant_database_aliases() sees the reduced config
-        get_tenant_database_aliases.cache_clear()
+        # Clear cache so get_all_tenant_databases() sees the reduced config
+        get_all_tenant_databases.cache_clear()
 
         super().setUpClass()
 
@@ -669,7 +669,7 @@ class CloneSchemaTest(BaseTestCase):
             from django.conf import settings
             import copy
             settings.DATABASES = copy.deepcopy(_MODULE_ORIGINAL_DATABASES)
-            get_tenant_database_aliases.cache_clear()
+            get_all_tenant_databases.cache_clear()
 
         cls.addClassCleanup(restore_databases)
 
@@ -678,8 +678,8 @@ class CloneSchemaTest(BaseTestCase):
         from django.conf import settings
         settings.DATABASES = {'default': _MODULE_ORIGINAL_DATABASES['default']}
 
-        # Clear cache so get_tenant_database_aliases() sees the reduced config
-        get_tenant_database_aliases.cache_clear()
+        # Clear cache so get_all_tenant_databases() sees the reduced config
+        get_all_tenant_databases.cache_clear()
 
         super().setUpClass()
 
@@ -952,7 +952,7 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
 
         # Clear cache because this test class uses databases = '__all__'
         # which makes all tenant databases available (not just 'default')
-        get_tenant_database_aliases.cache_clear()
+        get_all_tenant_databases.cache_clear()
 
         cls.sync_shared()
 
@@ -984,16 +984,16 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         Should activate tenant schema on all databases with django-tenants engine.
 
         When activate() is called, it should iterate through all databases
-        returned by get_tenant_database_aliases() and set the tenant schema
+        returned by get_all_tenant_databases() and set the tenant schema
         on each one.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         # Activate the tenant
         self.tenant.activate()
 
         # Should have set the tenant schema on all tenant databases
-        tenant_dbs = get_tenant_database_aliases()
+        tenant_dbs = get_all_tenant_databases()
         self.assertGreater(len(tenant_dbs), 1, "Should have multiple tenant databases configured")
 
         for db_alias in tenant_dbs:
@@ -1007,12 +1007,12 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         """
         Should detect all databases with django-tenants engine.
 
-        Verifies that get_tenant_database_aliases() returns all databases
+        Verifies that get_all_tenant_databases() returns all databases
         configured with the django-tenants engine (default, replica, other).
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
-        tenant_dbs = get_tenant_database_aliases()
+        tenant_dbs = get_all_tenant_databases()
 
         # Should include all three tenant databases from settings
         self.assertIn('default', tenant_dbs)
@@ -1039,16 +1039,16 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         Should deactivate tenant schema on all databases with django-tenants engine.
 
         When deactivate() is called, it should iterate through all databases
-        returned by get_tenant_database_aliases() and set the public schema
+        returned by get_all_tenant_databases() and set the public schema
         on each one.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         # First activate the tenant
         self.tenant.activate()
 
         # Verify it's activated
-        tenant_dbs = get_tenant_database_aliases()
+        tenant_dbs = get_all_tenant_databases()
         for db_alias in tenant_dbs:
             self.assertEqual(connections[db_alias].schema_name, 'multidb_test')
 
@@ -1083,14 +1083,14 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         When used as a context manager, entering should save the previous
         tenant for all databases, and exiting should restore them all.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         # Start in public schema on all databases
         get_tenant_model().deactivate()
 
         # Verify all databases are on public schema
         public_schema = get_public_schema_name()
-        tenant_dbs = get_tenant_database_aliases()
+        tenant_dbs = get_all_tenant_databases()
         for db_alias in tenant_dbs:
             self.assertEqual(connections[db_alias].schema_name, public_schema)
 
@@ -1113,7 +1113,7 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         When context managers are nested, each exit should restore the
         schema that was active when that context was entered.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         # Ensure all databases are on public schema before creating second tenant
         get_tenant_model().deactivate()
@@ -1125,7 +1125,7 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         domain2.save()
 
         try:
-            tenant_dbs = get_tenant_database_aliases()
+            tenant_dbs = get_all_tenant_databases()
             public_schema = get_public_schema_name()
 
             # Start in public
@@ -1160,9 +1160,9 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         Should create tenant schema on all databases with django-tenants engine.
 
         When create_schema() is called, it should create the schema on all
-        databases returned by get_tenant_database_aliases().
+        databases returned by get_all_tenant_databases().
         """
-        from django_tenants.utils import get_tenant_database_aliases, schema_exists
+        from django_tenants.utils import get_all_tenant_databases, schema_exists
 
         # Create a new tenant (don't let auto_create_schema run)
         tenant = get_tenant_model()(schema_name='schema_create_test')
@@ -1171,7 +1171,7 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
 
         try:
             # Verify schema doesn't exist yet on any database
-            tenant_dbs = get_tenant_database_aliases()
+            tenant_dbs = get_all_tenant_databases()
             for db_alias in tenant_dbs:
                 self.assertFalse(schema_exists('schema_create_test', database=db_alias),
                                f"Schema should not exist on {db_alias} yet")
@@ -1194,9 +1194,9 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         Should drop tenant schema from all databases with django-tenants engine.
 
         When _drop_schema() is called with force_drop=True, it should drop the
-        schema from all databases returned by get_tenant_database_aliases().
+        schema from all databases returned by get_all_tenant_databases().
         """
-        from django_tenants.utils import get_tenant_database_aliases, schema_exists
+        from django_tenants.utils import get_all_tenant_databases, schema_exists
 
         # Create a new tenant with schema on all databases
         tenant = get_tenant_model()(schema_name='schema_drop_test')
@@ -1204,7 +1204,7 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
 
         try:
             # Verify schema exists on all tenant databases
-            tenant_dbs = get_tenant_database_aliases()
+            tenant_dbs = get_all_tenant_databases()
             for db_alias in tenant_dbs:
                 self.assertTrue(schema_exists('schema_drop_test', database=db_alias),
                               f"Schema should exist on {db_alias} before drop")
@@ -1233,7 +1233,7 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         databases with the django-tenants engine are on the public schema.
         If any database is on a tenant schema, it should raise an exception.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         # Set all databases to public schema
         get_tenant_model().deactivate()
@@ -1267,7 +1267,7 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         get_tenant_model().deactivate()
 
         # Verify all databases are on public
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             self.assertEqual(connections[db_alias].schema_name, get_public_schema_name())
 
         # Create a new tenant - should succeed
@@ -1334,7 +1334,7 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         get_tenant_model().deactivate()
 
         # Verify all databases are on public
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             self.assertEqual(connections[db_alias].schema_name, get_public_schema_name())
 
         # Update the tenant - should succeed
@@ -1355,7 +1355,7 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         self.tenant.activate()
 
         # Verify all databases are on tenant's schema
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             self.assertEqual(connections[db_alias].schema_name, 'multidb_test')
 
         # Update the tenant - should succeed
@@ -1374,7 +1374,7 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         it's missing. The check_if_exists parameter should be evaluated per-database,
         not globally.
         """
-        from django_tenants.utils import get_tenant_database_aliases, schema_exists
+        from django_tenants.utils import get_all_tenant_databases, schema_exists
         from django.conf import settings
 
         # Create a new tenant without auto-creation
@@ -1383,7 +1383,7 @@ class MultiDatabaseTenantMixinTest(BaseTestCase):
         tenant.save()
 
         try:
-            tenant_dbs = get_tenant_database_aliases()
+            tenant_dbs = get_all_tenant_databases()
             non_mirrored_dbs = [
                 db for db in tenant_dbs
                 if not settings.DATABASES.get(db, {}).get('TEST', {}).get('MIRROR')

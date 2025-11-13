@@ -18,8 +18,8 @@ from django_tenants.test.cases import TenantTestCase
 from django_tenants.tests.testcases import BaseTestCase
 from django_tenants.utils import (
     get_public_schema_name,
-    get_tenant_database_alias,
-    get_tenant_database_aliases,
+    get_primary_tenant_database,
+    get_all_tenant_databases,
     get_tenant_domain_model,
     get_tenant_model,
     schema_exists,
@@ -275,12 +275,12 @@ class MultiDatabaseMigrationTestCase(BaseTestCase):
             # Public schema should be migrated exactly once
             mock_run.assert_called_once()
 
-            # Should use default database (or the one from get_tenant_database_alias)
+            # Should use default database (or the one from get_primary_tenant_database)
             call_kwargs = mock_run.call_args[0][1]
-            expected_db = call_kwargs.get('database', get_tenant_database_alias())
+            expected_db = call_kwargs.get('database', get_primary_tenant_database())
             self.assertEqual(
                 expected_db,
-                get_tenant_database_alias(),
+                get_primary_tenant_database(),
                 "Public schema should be migrated on default database"
             )
 
@@ -296,9 +296,9 @@ class MultiDatabaseMigrationTestCase(BaseTestCase):
         from django.conf import settings
 
         # Clear the cache to ensure we get fresh database detection
-        # This is necessary because other tests may have called get_tenant_database_aliases()
+        # This is necessary because other tests may have called get_all_tenant_databases()
         # before all test databases were created
-        get_tenant_database_aliases.cache_clear()
+        get_all_tenant_databases.cache_clear()
 
         options = {'database': None}
         executor = StandardExecutor([], options)

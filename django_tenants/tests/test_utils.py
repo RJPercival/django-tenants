@@ -7,7 +7,7 @@ from django_tenants.test.cases import TenantTestCase
 from django.core.management.commands.migrate import Command as MigrateCommand
 from django.test.utils import override_settings
 
-from django_tenants.utils import get_tenant, get_tenant_database_alias
+from django_tenants.utils import get_tenant, get_primary_tenant_database
 
 
 class CustomMigrateCommand(MigrateCommand):
@@ -58,11 +58,11 @@ class ConfigStringParsingTestCase(TenantTestCase):
 
 class GetTenantDatabaseAliasesTestCase(TenantTestCase):
     """
-    Tests for get_tenant_database_aliases() function.
+    Tests for get_all_tenant_databases() function.
 
     This function should return a list of all database aliases that use the
     django-tenants engine. In the pre-refactor version, it simply returns
-    a list containing the single result from get_tenant_database_alias().
+    a list containing the single result from get_primary_tenant_database().
     """
 
     def test_returns_list_with_database_aliases(self):
@@ -72,9 +72,9 @@ class GetTenantDatabaseAliasesTestCase(TenantTestCase):
         Test settings include multiple databases (default, replica, other)
         for testing multi-database support.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
-        result = get_tenant_database_aliases()
+        result = get_all_tenant_databases()
 
         # Should return a list
         self.assertIsInstance(result, list)
@@ -83,7 +83,7 @@ class GetTenantDatabaseAliasesTestCase(TenantTestCase):
         self.assertGreaterEqual(len(result), 1)
 
         # Should include the default database
-        expected = get_tenant_database_alias()
+        expected = get_primary_tenant_database()
         self.assertIn(expected, result)
 
         # In test settings, should have all three tenant databases
@@ -99,14 +99,14 @@ class GetTenantDatabaseAliasesTestCase(TenantTestCase):
         Calling the function multiple times should return the same list instance,
         indicating that the result has been cached.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         # Clear any existing cache
-        if hasattr(get_tenant_database_aliases, 'cache_clear'):
-            get_tenant_database_aliases.cache_clear()
+        if hasattr(get_all_tenant_databases, 'cache_clear'):
+            get_all_tenant_databases.cache_clear()
 
-        result1 = get_tenant_database_aliases()
-        result2 = get_tenant_database_aliases()
+        result1 = get_all_tenant_databases()
+        result2 = get_all_tenant_databases()
 
         # Should return the same cached object
         self.assertIs(result1, result2)
@@ -118,13 +118,13 @@ class GetTenantDatabaseAliasesTestCase(TenantTestCase):
         The function now scans settings.DATABASES for all databases using
         the django-tenants engine, making TENANT_DB_ALIAS obsolete for this purpose.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         # Clear cache to pick up the current settings
-        if hasattr(get_tenant_database_aliases, 'cache_clear'):
-            get_tenant_database_aliases.cache_clear()
+        if hasattr(get_all_tenant_databases, 'cache_clear'):
+            get_all_tenant_databases.cache_clear()
 
-        result = get_tenant_database_aliases()
+        result = get_all_tenant_databases()
 
         # Should return databases with django-tenants engine from current settings
         self.assertIsInstance(result, list)
@@ -135,7 +135,7 @@ class GetTenantDatabaseAliasesTestCase(TenantTestCase):
 
 class MultiDatabaseDetectionTestCase(TenantTestCase):
     """
-    Tests for multi-database detection in get_tenant_database_aliases().
+    Tests for multi-database detection in get_all_tenant_databases().
 
     This function should scan settings.DATABASES and return all databases
     that use the django-tenants engine.
@@ -156,15 +156,15 @@ class MultiDatabaseDetectionTestCase(TenantTestCase):
         Should detect all databases using the django-tenants engine.
 
         When multiple databases are configured with the django-tenants engine,
-        get_tenant_database_aliases() should return all of them.
+        get_all_tenant_databases() should return all of them.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         # Clear cache to pick up the new settings
-        if hasattr(get_tenant_database_aliases, 'cache_clear'):
-            get_tenant_database_aliases.cache_clear()
+        if hasattr(get_all_tenant_databases, 'cache_clear'):
+            get_all_tenant_databases.cache_clear()
 
-        result = get_tenant_database_aliases()
+        result = get_all_tenant_databases()
 
         # Should return both databases
         self.assertIsInstance(result, list)
@@ -189,13 +189,13 @@ class MultiDatabaseDetectionTestCase(TenantTestCase):
         Databases using standard Django engines (not django-tenants) should
         be excluded from the result.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         # Clear cache to pick up the new settings
-        if hasattr(get_tenant_database_aliases, 'cache_clear'):
-            get_tenant_database_aliases.cache_clear()
+        if hasattr(get_all_tenant_databases, 'cache_clear'):
+            get_all_tenant_databases.cache_clear()
 
-        result = get_tenant_database_aliases()
+        result = get_all_tenant_databases()
 
         # Should only include 'default', not 'analytics'
         self.assertIsInstance(result, list)
@@ -224,13 +224,13 @@ class MultiDatabaseDetectionTestCase(TenantTestCase):
         Read replicas using the django-tenants engine should be included,
         allowing tenant schemas to be activated on them for read operations.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         # Clear cache to pick up the new settings
-        if hasattr(get_tenant_database_aliases, 'cache_clear'):
-            get_tenant_database_aliases.cache_clear()
+        if hasattr(get_all_tenant_databases, 'cache_clear'):
+            get_all_tenant_databases.cache_clear()
 
-        result = get_tenant_database_aliases()
+        result = get_all_tenant_databases()
 
         # Should include both tenant databases, but not analytics
         self.assertIsInstance(result, list)
@@ -253,7 +253,7 @@ class SchemaExistsTestCase(TenantTestCase):
         Should check the default tenant database when no database parameter is provided.
 
         When called without specifying a database, schema_exists() should use
-        the default tenant database (from get_tenant_database_alias()).
+        the default tenant database (from get_primary_tenant_database()).
         """
         from django_tenants.utils import schema_exists
 
@@ -270,11 +270,11 @@ class SchemaExistsTestCase(TenantTestCase):
         When the database parameter is provided, schema_exists() should check
         the specified database for the schema.
         """
-        from django_tenants.utils import schema_exists, get_tenant_database_aliases
+        from django_tenants.utils import schema_exists, get_all_tenant_databases
         from django.conf import settings
 
         # Test across all tenant databases
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             # Skip databases that are TEST.MIRROR - they share the same physical database
             # as another alias, so they don't have their own separate schema creation
             db_config = settings.DATABASES.get(db_alias, {})
@@ -303,7 +303,7 @@ class SchemaExistsTestCase(TenantTestCase):
         After dropping a schema from a specific database, schema_exists()
         should return False for that database.
         """
-        from django_tenants.utils import schema_exists, get_tenant_database_aliases
+        from django_tenants.utils import schema_exists, get_all_tenant_databases
         from django.db import connections
         from django.conf import settings
 
@@ -312,7 +312,7 @@ class SchemaExistsTestCase(TenantTestCase):
 
         # Only work with non-mirrored databases to avoid deadlocks
         non_mirrored_dbs = []
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             db_config = settings.DATABASES.get(db_alias, {})
             if not db_config.get('TEST', {}).get('MIRROR'):
                 non_mirrored_dbs.append(db_alias)

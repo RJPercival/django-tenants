@@ -8,7 +8,7 @@ from django_tenants.signals import schema_migrated, schema_migrate_message, sche
 from django_tenants.utils import (
     get_public_schema_name,
     get_tenant_base_migrate_command_class,
-    get_tenant_database_alias,
+    get_primary_tenant_database,
 )
 
 
@@ -44,7 +44,7 @@ def run_migrations(args, options, executor_codename, schema_name, tenant_type=''
     # Use default database if not specified in options.
     # Note: run_migrations() operates on a single database. Multi-database
     # iteration happens at the executor level via _get_databases_to_migrate().
-    database = options.get('database') or get_tenant_database_alias()
+    database = options.get('database') or get_primary_tenant_database()
     connection = connections[database]
     connection.set_schema(schema_name, tenant_type=tenant_type, include_public=False)
 
@@ -87,7 +87,7 @@ class MigrationExecutor:
         self.options = options
 
         self.PUBLIC_SCHEMA_NAME = get_public_schema_name()
-        self.TENANT_DB_ALIAS = get_tenant_database_alias()
+        self.TENANT_DB_ALIAS = get_primary_tenant_database()
 
     def run_migrations(self, tenants=None):
         raise NotImplementedError
@@ -106,12 +106,12 @@ class MigrationExecutor:
                        Otherwise, returns the single specified database.
         """
         from django.conf import settings
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         database = self.options.get('database')
         if database is None:
             # No database specified, migrate all tenant databases
-            all_databases = get_tenant_database_aliases()
+            all_databases = get_all_tenant_databases()
 
             # Filter out MIRROR databases - they should be managed by their source database
             # Note: Django adds default TEST config with MIRROR=None, so we check the value

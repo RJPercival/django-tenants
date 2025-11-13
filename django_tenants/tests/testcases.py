@@ -29,9 +29,9 @@ class BaseTestCase(TransactionTestCase):
         # Reset all tenant databases to public schema BEFORE any class setup
         # This ensures clean state even if previous test class left schemas dirty
         from django.db import connections
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             try:
                 connections[db_alias].set_schema_to_public()
             except Exception:
@@ -63,12 +63,12 @@ class BaseTestCase(TransactionTestCase):
         # Reset tenant databases to public schema
         # Only reset databases that this test has access to
         from django.db import connections
-        from django_tenants.utils import get_tenant_model, get_tenant_database_aliases
+        from django_tenants.utils import get_tenant_model, get_all_tenant_databases
 
         # Get databases this test class is allowed to access
         # Include mirrors because validation checks all tenant databases including mirrors
         test_databases = self._databases_names(include_mirrors=True)
-        tenant_databases = get_tenant_database_aliases()
+        tenant_databases = get_all_tenant_databases()
 
         # Reset only accessible tenant databases
         for db_alias in tenant_databases:
@@ -88,8 +88,8 @@ class BaseTestCase(TransactionTestCase):
             setattr(settings, key, value)
 
         # Clear cached database aliases since settings changed
-        from django_tenants.utils import get_tenant_database_aliases
-        get_tenant_database_aliases.cache_clear()
+        from django_tenants.utils import get_all_tenant_databases
+        get_all_tenant_databases.cache_clear()
 
     @classmethod
     def get_tables_list_in_schema(cls, schema_name):

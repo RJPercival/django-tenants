@@ -1,8 +1,8 @@
 from django.db.migrations.autodetector import MigrationAutodetector
 
 from django_tenants.migration_executors import get_executor
-from django_tenants.utils import get_tenant_model, get_public_schema_name, schema_exists, get_tenant_database_alias, \
-    get_tenant_database_aliases, has_multi_type_tenants, get_multi_type_database_field_name, get_tenant_migration_order
+from django_tenants.utils import get_tenant_model, get_public_schema_name, schema_exists, get_primary_tenant_database, \
+    get_all_tenant_databases, has_multi_type_tenants, get_multi_type_database_field_name, get_tenant_migration_order
 from django_tenants.management.commands import SyncCommon
 from django.utils.module_loading import import_string
 from django.conf import settings
@@ -71,7 +71,7 @@ class MigrateSchemasCommand(SyncCommon):
                 database = self.options.get('database')
                 if database is None:
                     # Check all tenant databases
-                    databases_to_check = get_tenant_database_aliases()
+                    databases_to_check = get_all_tenant_databases()
                 else:
                     # Check only specified database
                     databases_to_check = [database]

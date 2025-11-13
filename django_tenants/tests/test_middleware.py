@@ -6,7 +6,7 @@ from django.views import View
 
 from django_tenants.test.cases import FastTenantTestCase
 from django_tenants.test.client import TenantClient
-from django_tenants.utils import get_tenant_database_alias, get_public_schema_name
+from django_tenants.utils import get_primary_tenant_database, get_public_schema_name
 
 
 def custom_not_found_view(request):
@@ -88,7 +88,7 @@ class MiddlewareRefactoringTestCase(FastTenantTestCase):
         After the middleware finds the tenant by hostname, it should activate that
         tenant's schema on the database connection.
         """
-        db_alias = get_tenant_database_alias()
+        db_alias = get_primary_tenant_database()
         connection = connections[db_alias]
 
         # Make a request through the middleware (404 is fine, we just care about schema)
@@ -105,7 +105,7 @@ class MiddlewareRefactoringTestCase(FastTenantTestCase):
         The middleware should store the identified tenant object on the connection
         so other parts of the application can access it.
         """
-        db_alias = get_tenant_database_alias()
+        db_alias = get_primary_tenant_database()
         connection = connections[db_alias]
 
         # Make a request through the middleware
@@ -141,13 +141,13 @@ class MultiDatabaseMiddlewareTestCase(FastTenantTestCase):
         configured with django-tenants engine should have that tenant's
         schema activated.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         # Make a request through the middleware
         response = self.client.get('/nonexistent')
 
         # All tenant databases should have the tenant schema activated
-        tenant_dbs = get_tenant_database_aliases()
+        tenant_dbs = get_all_tenant_databases()
         self.assertGreater(len(tenant_dbs), 1, "Should have multiple tenant databases configured")
 
         for db_alias in tenant_dbs:
@@ -164,13 +164,13 @@ class MultiDatabaseMiddlewareTestCase(FastTenantTestCase):
         When middleware encounters an invalid/unknown hostname, it should
         ensure all databases are on the public schema (via deactivate()).
         """
-        from django_tenants.utils import get_tenant_database_aliases, get_public_schema_name
+        from django_tenants.utils import get_all_tenant_databases, get_public_schema_name
 
         # Make request with invalid hostname (should trigger deactivate)
         response = self.client.get('/', HTTP_HOST='invalid-hostname.com')
 
         # All tenant databases should be on public schema
-        tenant_dbs = get_tenant_database_aliases()
+        tenant_dbs = get_all_tenant_databases()
         public_schema = get_public_schema_name()
 
         for db_alias in tenant_dbs:

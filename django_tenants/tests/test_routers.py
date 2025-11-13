@@ -12,7 +12,7 @@ class MultiDatabaseRouterTestCase(BaseTestCase):
 
     Verifies that the router allows migrations on all databases configured
     with the django-tenants engine, not just the single database returned
-    by get_tenant_database_alias().
+    by get_primary_tenant_database().
 
     Uses databases = '__all__' to access all configured tenant databases.
     """
@@ -56,10 +56,10 @@ class MultiDatabaseRouterTestCase(BaseTestCase):
         django-tenants engine, it should return None (allowing the migration)
         for appropriate apps, regardless of which specific tenant database it is.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         router = TenantSyncRouter()
-        tenant_dbs = get_tenant_database_aliases()
+        tenant_dbs = get_all_tenant_databases()
 
         # Activate tenant on all databases
         self.tenant.activate()
@@ -82,10 +82,10 @@ class MultiDatabaseRouterTestCase(BaseTestCase):
         When in a tenant schema, migrations for SHARED_APPS should not be
         allowed regardless of which database we're on.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         router = TenantSyncRouter()
-        tenant_dbs = get_tenant_database_aliases()
+        tenant_dbs = get_all_tenant_databases()
 
         # Activate tenant on all databases
         self.tenant.activate()
@@ -104,10 +104,10 @@ class MultiDatabaseRouterTestCase(BaseTestCase):
         When in the public schema, migrations for SHARED_APPS should be
         allowed on tenant databases.
         """
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
 
         router = TenantSyncRouter()
-        tenant_dbs = get_tenant_database_aliases()
+        tenant_dbs = get_all_tenant_databases()
 
         # Set to public schema on all databases
         get_tenant_model().deactivate()
@@ -132,7 +132,7 @@ class MultiDatabaseRouterTestCase(BaseTestCase):
         router = TenantSyncRouter()
 
         # Test with a fake non-tenant database alias
-        # This database doesn't exist in settings, so it won't be in get_tenant_database_aliases()
+        # This database doesn't exist in settings, so it won't be in get_all_tenant_databases()
         result = router.allow_migrate('fake_analytics_db', 'dts_test_app', model_name='DummyModel')
 
         # Should return False for non-tenant database

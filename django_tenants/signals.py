@@ -50,10 +50,10 @@ def tenant_delete_callback(sender, instance, **kwargs):
 
     if instance.auto_drop_schema:
         # Check if schema exists on any database (multi-database support)
-        from django_tenants.utils import get_tenant_database_aliases
+        from django_tenants.utils import get_all_tenant_databases
         schema_exists_anywhere = any(
             schema_exists(instance.schema_name, database=db_alias)
-            for db_alias in get_tenant_database_aliases()
+            for db_alias in get_all_tenant_databases()
         )
         if schema_exists_anywhere:
             instance._drop_schema(True)

@@ -8,8 +8,8 @@ from django_tenants.clone import CloneSchema
 from .postgresql_backend.base import _check_schema_name
 from .signals import post_schema_sync, schema_needs_to_be_sync
 from .utils import get_creation_fakes_migrations, get_tenant_base_schema
-from .utils import schema_exists, get_tenant_domain_model, get_public_schema_name, get_tenant_database_alias, \
-    get_tenant_database_aliases
+from .utils import schema_exists, get_tenant_domain_model, get_public_schema_name, get_primary_tenant_database, \
+    get_all_tenant_databases
 
 
 def _get_database_key(connection):
@@ -87,7 +87,7 @@ class TenantMixin(models.Model):
             # run some code in previous tenant (public probably)
         """
         # Save previous tenant for each database
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             if db_alias not in self._previous_tenant:
                 self._previous_tenant[db_alias] = []
             conn = connections[db_alias]
@@ -108,7 +108,7 @@ class TenantMixin(models.Model):
         Usage:
             Tenant.objects.get(schema_name='test').activate()
         """
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             connection = connections[db_alias]
             connection.set_tenant(self)
 
@@ -122,7 +122,7 @@ class TenantMixin(models.Model):
             # or simpler
             Tenant.deactivate()
         """
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             connection = connections[db_alias]
             connection.set_schema_to_public()
 
@@ -130,7 +130,7 @@ class TenantMixin(models.Model):
         is_new = self._state.adding
 
         # Validate all tenant databases have correct schema
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             connection = connections[db_alias]
             has_schema = hasattr(connection, 'schema_name')
 
@@ -145,8 +145,8 @@ class TenantMixin(models.Model):
         super().save(*args, **kwargs)
 
         # All tenant databases have schema support (checked above)
-        # Note: has_schema is True for all databases returned by get_tenant_database_aliases()
-        has_schema = len(get_tenant_database_aliases()) > 0
+        # Note: has_schema is True for all databases returned by get_all_tenant_databases()
+        has_schema = len(get_all_tenant_databases()) > 0
         if has_schema and is_new and self.auto_create_schema:
             try:
                 self.create_schema(check_if_exists=True, verbosity=verbosity)
@@ -163,7 +163,7 @@ class TenantMixin(models.Model):
             # Check if schema is missing from any database (multi-database support)
             schema_missing = any(
                 not schema_exists(self.schema_name, database=db_alias)
-                for db_alias in get_tenant_database_aliases()
+                for db_alias in get_all_tenant_databases()
             )
             if schema_missing:
                 # Create schemas for existing models on databases where missing
@@ -189,7 +189,7 @@ class TenantMixin(models.Model):
         # Check if we should drop (based on first accessible database)
         should_drop = False
 
-        for db_alias in get_tenant_database_aliases():
+        for db_alias in get_all_tenant_databases():
             connection = connections[db_alias]
             db_key = _get_database_key(connection)
 
@@ -210,7 +210,7 @@ class TenantMixin(models.Model):
             # Drop schema from all tenant databases
             processed_databases.clear()  # Reset for drop loop
 
-            for db_alias in get_tenant_database_aliases():
+            for db_alias in get_all_tenant_databases():
                 connection = connections[db_alias]
                 db_key = _get_database_key(connection)
 
@@ -273,7 +273,7 @@ class TenantMixin(models.Model):
                 # copy tables and data from provided model schema
                 # Note: CloneSchema currently only works with the default database
                 # For multi-database support, this path needs further work
-                connection = connections[get_tenant_database_alias()]
+                connection = connections[get_primary_tenant_database()]
                 base_schema = get_tenant_base_schema()
                 clone_schema = CloneSchema()
                 clone_schema.clone_schema(
@@ -294,7 +294,7 @@ class TenantMixin(models.Model):
                 # (prevents self-deadlock when multiple aliases point to same database)
                 processed_databases = set()
 
-                for db_alias in get_tenant_database_aliases():
+                for db_alias in get_all_tenant_databases():
                     connection = connections[db_alias]
                     db_key = _get_database_key(connection)
 
@@ -316,7 +316,7 @@ class TenantMixin(models.Model):
                              verbosity=verbosity)
 
                 # Set all databases back to public schema
-                for db_alias in get_tenant_database_aliases():
+                for db_alias in get_all_tenant_databases():
                     connections[db_alias].set_schema_to_public()
 
     def get_primary_domain(self):
