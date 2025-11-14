@@ -9,6 +9,9 @@ class StandardExecutor(MigrationExecutor):
     def run_migrations(self, tenants=None):
         tenants = tenants or []
 
+        # Print executor startup message
+        self._print_executor_header()
+
         # Public schema migrates once on default database only
         if self.PUBLIC_SCHEMA_NAME in tenants:
             # Ensure public schema uses the default tenant database
@@ -34,6 +37,9 @@ class StandardExecutor(MigrationExecutor):
 
     def run_multi_type_migrations(self, tenants):
         tenants = tenants or []
+
+        # Print executor startup message
+        self._print_executor_header()
 
         # Tenant schemas migrate on all tenant databases
         databases = self._get_databases_to_migrate()

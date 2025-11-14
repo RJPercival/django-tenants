@@ -19,6 +19,11 @@ def run_migrations(args, options, executor_codename, schema_name, tenant_type=''
     from django.db import connections
     style = color.color_style()
 
+    # Use default database if not specified in options.
+    # Note: run_migrations() operates on a single database. Multi-database
+    # iteration happens at the executor level via _get_databases_to_migrate().
+    database = options.get('database') or get_primary_tenant_database()
+
     def style_func(msg):
         percent_str = ''
         if idx is not None and count is not None and count > 0:
@@ -26,7 +31,7 @@ def run_migrations(args, options, executor_codename, schema_name, tenant_type=''
 
         message = '[%s%s:%s] %s' % (
             percent_str,
-            style.NOTICE(executor_codename),
+            style.NOTICE(database),
             style.NOTICE(schema_name),
             msg
         )
@@ -41,10 +46,6 @@ def run_migrations(args, options, executor_codename, schema_name, tenant_type=''
 
     schema_pre_migration.send(run_migrations, schema_name=schema_name)
 
-    # Use default database if not specified in options.
-    # Note: run_migrations() operates on a single database. Multi-database
-    # iteration happens at the executor level via _get_databases_to_migrate().
-    database = options.get('database') or get_primary_tenant_database()
     connection = connections[database]
     connection.set_schema(schema_name, tenant_type=tenant_type, include_public=False)
 
@@ -88,6 +89,14 @@ class MigrationExecutor:
 
         self.PUBLIC_SCHEMA_NAME = get_public_schema_name()
         self.TENANT_DB_ALIAS = get_primary_tenant_database()
+
+    def _print_executor_header(self) -> None:
+        """Print a header message showing which executor is being used."""
+        from django.core.management import color
+        import sys
+
+        style = color.color_style()
+        sys.stdout.write(style.NOTICE(f"=== Using {self.codename} executor ===\n"))
 
     def run_migrations(self, tenants=None):
         raise NotImplementedError
