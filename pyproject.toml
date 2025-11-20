@@ -46,6 +46,9 @@ optional-dependencies.pytest = [
 ]
 urls."Homepage" = "https://github.com/django-tenants/django-tenants"
 
+[project.entry-points.pytest11]
+django_tenants = "django_tenants.pytest_plugin"
+
 [tool.setuptools]
 include-package-data = true
 zip-safe = false
