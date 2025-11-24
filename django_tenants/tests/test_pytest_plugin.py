@@ -90,61 +90,13 @@ class TestTenantClientFixture:
         assert tenant_client.tenant == tenant
 
 
-@pytest.mark.tenant(schema_name='custom_schema', domain='custom.test.com')
-class TestTenantCustomization:
-    """
-    Test tenant customization via markers.
-
-    Expected behavior:
-    - Marker parameters override defaults
-    - Custom schema name is used
-    - Custom domain is used
-    """
-
-    def test_custom_schema_name(self, tenant):
-        """Custom schema_name from marker should be used."""
-        assert tenant.schema_name == 'custom_schema'
-
-    def test_custom_domain(self, tenant_domain):
-        """Custom domain from marker should be used."""
-        assert tenant_domain.domain == 'custom.test.com'
-
-    def test_custom_domain_in_allowed_hosts(self, tenant_domain):
-        """Custom domain should be added to ALLOWED_HOSTS."""
-        assert tenant_domain.domain in settings.ALLOWED_HOSTS
-
-
-@pytest.mark.tenant(scope='session')
-class TestSessionScopeTenant:
-    """
-    Test session-scoped tenant (FastTenantTestCase equivalent).
-
-    Expected behavior:
-    - Tenant is created once for the session
-    - Same tenant instance used across multiple tests
-    - Tenant persists between tests
-    - Data is rolled back between tests (via transaction)
-    - Cleanup happens at session end (not between tests)
-    """
-
-    def test_session_tenant_first(self, tenant):
-        """Session-scoped tenant should have correct schema name and be persisted."""
-        assert tenant.schema_name == 'test'
-        assert tenant.pk is not None
-
-    def test_session_tenant_second(self, tenant):
-        """Session-scoped tenant should be available in multiple tests within session."""
-        assert tenant.schema_name == 'test'
-        assert tenant.pk is not None
-
-
 class TestFunctionScopeTenant:
     """
-    Test function-scoped tenant (TenantTestCase equivalent).
+    Test function-scoped tenant (TenantTestCase equivalent - the default).
 
     Expected behavior:
     - Fresh tenant created for each test function
-    - Tenant is cleaned up after each test
+    - Tenant is cleaned up via transaction rollback after each test
     - Full isolation between tests
     """
 
@@ -159,28 +111,26 @@ class TestFunctionScopeTenant:
         assert tenant.pk is not None
 
 
-@pytest.mark.tenant(scope='class')
-class TestClassScopeTenant:
+class TestTenantCustomization:
     """
-    Test class-scoped tenant.
+    Test tenant customization via fixture overrides.
 
     Expected behavior:
-    - Tenant created once per test class
-    - Shared across all tests in the class
-    - Cleanup happens at session end (not after class completes)
+    - Users can override helper fixtures to customize tenant properties
+    - Custom schema names and domains work correctly
     """
 
-    tenant_id_from_first_test = None
-
-    def test_class_tenant_first(self, tenant):
-        """Class-scoped tenant should have correct schema name and be persisted."""
+    def test_default_schema_name(self, tenant):
+        """Default schema_name should be 'test'."""
         assert tenant.schema_name == 'test'
-        TestClassScopeTenant.tenant_id_from_first_test = tenant.pk
 
-    def test_class_tenant_second(self, tenant):
-        """Class-scoped tenant should be shared across all tests in the class."""
-        assert tenant.schema_name == 'test'
-        assert tenant.pk == TestClassScopeTenant.tenant_id_from_first_test
+    def test_default_domain(self, tenant_domain):
+        """Default domain should be 'tenant.test.com'."""
+        assert tenant_domain.domain == 'tenant.test.com'
+
+    def test_domain_in_allowed_hosts(self, tenant_domain):
+        """Tenant domain should be added to ALLOWED_HOSTS."""
+        assert tenant_domain.domain in settings.ALLOWED_HOSTS
 
 
 class TestTenantIsolation:
