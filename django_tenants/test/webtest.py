@@ -5,6 +5,8 @@ This module provides a wrapper for django-webtest's DjangoTestApp that
 automatically sets the tenant context for all requests.
 """
 
+from typing import Any
+
 
 class TenantDjangoTestApp:
     """
@@ -27,7 +29,7 @@ class TenantDjangoTestApp:
         tenant: The tenant instance to use for requests
     """
 
-    def __init__(self, app, tenant):
+    def __init__(self, app: Any, tenant: Any) -> None:
         """
         Initialize the wrapper with an app instance and tenant.
 
@@ -40,7 +42,7 @@ class TenantDjangoTestApp:
         # Domain is retrieved dynamically rather than cached to handle
         # dynamic domain changes during tests
 
-    def _add_tenant_context(self, kwargs):
+    def _add_tenant_context(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """
         Add tenant context to request kwargs.
 
@@ -63,42 +65,42 @@ class TenantDjangoTestApp:
 
         return kwargs
 
-    def get(self, *args, **kwargs):
+    def get(self, *args: Any, **kwargs: Any) -> Any:
         """Make a GET request with tenant context."""
         kwargs = self._add_tenant_context(kwargs)
         return self._app.get(*args, **kwargs)
 
-    def post(self, *args, **kwargs):
+    def post(self, *args: Any, **kwargs: Any) -> Any:
         """Make a POST request with tenant context."""
         kwargs = self._add_tenant_context(kwargs)
         return self._app.post(*args, **kwargs)
 
-    def put(self, *args, **kwargs):
+    def put(self, *args: Any, **kwargs: Any) -> Any:
         """Make a PUT request with tenant context."""
         kwargs = self._add_tenant_context(kwargs)
         return self._app.put(*args, **kwargs)
 
-    def patch(self, *args, **kwargs):
+    def patch(self, *args: Any, **kwargs: Any) -> Any:
         """Make a PATCH request with tenant context."""
         kwargs = self._add_tenant_context(kwargs)
         return self._app.patch(*args, **kwargs)
 
-    def delete(self, *args, **kwargs):
+    def delete(self, *args: Any, **kwargs: Any) -> Any:
         """Make a DELETE request with tenant context."""
         kwargs = self._add_tenant_context(kwargs)
         return self._app.delete(*args, **kwargs)
 
-    def head(self, *args, **kwargs):
+    def head(self, *args: Any, **kwargs: Any) -> Any:
         """Make a HEAD request with tenant context."""
         kwargs = self._add_tenant_context(kwargs)
         return self._app.head(*args, **kwargs)
 
-    def options(self, *args, **kwargs):
+    def options(self, *args: Any, **kwargs: Any) -> Any:
         """Make an OPTIONS request with tenant context."""
         kwargs = self._add_tenant_context(kwargs)
         return self._app.options(*args, **kwargs)
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         """
         Delegate all other attribute access to the wrapped app.
 

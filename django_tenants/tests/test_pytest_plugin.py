@@ -124,19 +124,17 @@ class TestSessionScopeTenant:
     - Same tenant instance used across multiple tests
     - Tenant persists between tests
     - Data is rolled back between tests (via transaction)
+    - Cleanup happens at session end (not between tests)
     """
 
     def test_session_tenant_first(self, tenant):
-        """First test with session-scoped tenant."""
+        """Session-scoped tenant should have correct schema name and be persisted."""
         assert tenant.schema_name == 'test'
-        # Store the tenant ID for comparison in next test
-        self.tenant_id = tenant.pk
+        assert tenant.pk is not None
 
     def test_session_tenant_second(self, tenant):
-        """Second test should reuse the same tenant."""
+        """Session-scoped tenant should be available in multiple tests within session."""
         assert tenant.schema_name == 'test'
-        # Tenant ID should be the same as in first test
-        # (Note: This assumes tests run in order, but the fixture ensures reuse)
         assert tenant.pk is not None
 
 
@@ -151,16 +149,13 @@ class TestFunctionScopeTenant:
     """
 
     def test_function_tenant_first(self, tenant):
-        """First test with function-scoped tenant."""
-        # Each test gets its own tenant
+        """Function-scoped tenant should have correct schema name and be persisted."""
         assert tenant.schema_name == 'test'
-        self.first_tenant_id = tenant.pk
+        assert tenant.pk is not None
 
     def test_function_tenant_second(self, tenant):
-        """Second test gets a fresh tenant (not reused)."""
+        """Function-scoped tenant should be available in each test."""
         assert tenant.schema_name == 'test'
-        # In function scope, each test may get a fresh tenant
-        # (cleanup and recreation happens between tests)
         assert tenant.pk is not None
 
 
@@ -172,18 +167,18 @@ class TestClassScopeTenant:
     Expected behavior:
     - Tenant created once per test class
     - Shared across all tests in the class
-    - Cleaned up after all tests in class complete
+    - Cleanup happens at session end (not after class completes)
     """
 
     tenant_id_from_first_test = None
 
     def test_class_tenant_first(self, tenant):
-        """First test in class stores tenant ID."""
+        """Class-scoped tenant should have correct schema name and be persisted."""
         assert tenant.schema_name == 'test'
         TestClassScopeTenant.tenant_id_from_first_test = tenant.pk
 
     def test_class_tenant_second(self, tenant):
-        """Second test in class should reuse same tenant."""
+        """Class-scoped tenant should be shared across all tests in the class."""
         assert tenant.schema_name == 'test'
         assert tenant.pk == TestClassScopeTenant.tenant_id_from_first_test
 
@@ -216,35 +211,28 @@ class TestTenantIsolation:
             assert result is not None
 
 
-class TestTenantCleanup:
+class TestTenantFixtureResources:
     """
-    Test that tenants are properly cleaned up.
+    Verify tenant fixture creates required resources.
 
     Expected behavior:
-    - Tenant is removed from database after test
-    - Schema is dropped from database
-    - Domain is removed from ALLOWED_HOSTS
+    - Tenant is persisted to database with primary key
+    - Domain is persisted to database with primary key
+    - Domain is added to ALLOWED_HOSTS
     """
 
-    def test_tenant_cleanup_happens(self, tenant, tenant_domain):
+    def test_tenant_fixture_creates_resources(self, tenant, tenant_domain):
         """
-        Test setup to verify cleanup logic.
+        Tenant fixture should create persisted tenant and domain resources.
 
-        Note: The actual cleanup verification would need to happen in a
-        separate test run or via inspection of database state after the
-        fixture is torn down. This test verifies the setup is correct.
+        Note: This test verifies resources exist during the test.
+        Cleanup verification would require a separate test mechanism.
         """
-        tenant_id = tenant.pk
-        domain_name = tenant_domain.domain
-        schema_name = tenant.schema_name
-
-        # These should exist during the test
+        # Tenant should be persisted with a primary key
         assert tenant.pk is not None
-        assert tenant_domain.pk is not None
-        assert domain_name in settings.ALLOWED_HOSTS
 
-        # Store for potential verification
-        # (actual cleanup verification would be in a different test)
-        self.cleaned_tenant_id = tenant_id
-        self.cleaned_schema_name = schema_name
-        self.cleaned_domain_name = domain_name
+        # Domain should be persisted with a primary key
+        assert tenant_domain.pk is not None
+
+        # Domain should be added to ALLOWED_HOSTS
+        assert tenant_domain.domain in settings.ALLOWED_HOSTS

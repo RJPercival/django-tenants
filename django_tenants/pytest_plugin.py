@@ -13,6 +13,9 @@ Usage:
         assert response.status_code == 200
 """
 
+from collections.abc import Iterator
+from typing import Any
+
 import pytest
 
 # Defer Django imports until fixtures are used to avoid Django setup issues
@@ -23,7 +26,7 @@ import pytest
 _tenant_registry = {}
 
 
-def pytest_configure(config):
+def pytest_configure(config: Any) -> None:
     """Register custom markers."""
     config.addinivalue_line(
         "markers",
@@ -36,7 +39,7 @@ def pytest_configure(config):
 
 
 @pytest.fixture(scope='session')
-def django_db_modify_db_settings():
+def django_db_modify_db_settings() -> None:
     """
     Ensure pytest-django uses all databases for tenant tests.
 
@@ -47,7 +50,7 @@ def django_db_modify_db_settings():
 
 
 @pytest.fixture
-def tenant_schema_name():
+def tenant_schema_name() -> str:
     """
     Default schema name for test tenants.
 
@@ -61,7 +64,7 @@ def tenant_schema_name():
 
 
 @pytest.fixture
-def tenant_domain_name():
+def tenant_domain_name() -> str:
     """
     Default domain name for test tenants.
 
@@ -74,7 +77,7 @@ def tenant_domain_name():
     return 'tenant.test.com'
 
 
-def _get_tenant_marker_config(request):
+def _get_tenant_marker_config(request: Any) -> dict[str, str | None]:
     """Extract configuration from @pytest.mark.tenant marker."""
     marker = request.node.get_closest_marker('tenant')
     if marker:
@@ -86,7 +89,7 @@ def _get_tenant_marker_config(request):
     return {}
 
 
-def _get_effective_scope(request):
+def _get_effective_scope(request: Any) -> str:
     """
     Determine the effective scope for the tenant fixture.
 
@@ -98,7 +101,7 @@ def _get_effective_scope(request):
     return marker_config.get('scope', 'function')
 
 
-def _sync_shared_schema():
+def _sync_shared_schema() -> None:
     """Migrate the public/shared schema."""
     from django.core.management import call_command
     from django_tenants.utils import get_public_schema_name
@@ -111,7 +114,7 @@ def _sync_shared_schema():
     )
 
 
-def _add_domain_to_allowed_hosts(domain):
+def _add_domain_to_allowed_hosts(domain: str) -> None:
     """Add domain to ALLOWED_HOSTS if not already present."""
     from django.conf import settings
 
@@ -119,7 +122,7 @@ def _add_domain_to_allowed_hosts(domain):
         settings.ALLOWED_HOSTS += [domain]
 
 
-def _remove_domain_from_allowed_hosts(domain):
+def _remove_domain_from_allowed_hosts(domain: str) -> None:
     """Remove domain from ALLOWED_HOSTS."""
     from django.conf import settings
 
@@ -127,7 +130,7 @@ def _remove_domain_from_allowed_hosts(domain):
         settings.ALLOWED_HOSTS.remove(domain)
 
 
-def _create_tenant_and_domain(schema_name, domain_name):
+def _create_tenant_and_domain(schema_name: str, domain_name: str) -> tuple[Any, Any]:
     """
     Create a tenant and its associated domain.
 
@@ -159,7 +162,7 @@ def _create_tenant_and_domain(schema_name, domain_name):
     return tenant, domain
 
 
-def _cleanup_tenant_and_domain(tenant, domain, domain_name):
+def _cleanup_tenant_and_domain(tenant: Any, domain: Any, domain_name: str) -> None:
     """Clean up tenant, domain, and ALLOWED_HOSTS."""
     if domain:
         domain.delete()
@@ -171,12 +174,12 @@ def _cleanup_tenant_and_domain(tenant, domain, domain_name):
 
 @pytest.fixture
 def _tenant_impl(
-    request,
-    django_db_blocker,
-    django_db_setup,
-    tenant_schema_name,
-    tenant_domain_name
-):
+    request: Any,
+    django_db_blocker: Any,
+    django_db_setup: Any,
+    tenant_schema_name: str,
+    tenant_domain_name: str
+) -> Any:
     """
     Internal implementation of tenant fixture.
 
@@ -233,7 +236,7 @@ def _tenant_impl(
             _tenant_registry[registry_key] = tenant
 
     # Cleanup function
-    def cleanup():
+    def cleanup() -> None:
         # Only function-scoped tenants are cleaned up immediately.
         # Session and class-scoped tenants remain in the registry for reuse
         # and are cleaned up at session end via the _tenant_cleanup fixture.
@@ -247,7 +250,7 @@ def _tenant_impl(
 
 
 @pytest.fixture(scope='session', autouse=True)
-def _tenant_cleanup(django_db_blocker):
+def _tenant_cleanup(django_db_blocker: Any) -> Iterator[None]:
     """
     Session-scoped fixture to clean up all session/class-scoped tenants.
 
@@ -275,7 +278,7 @@ def _tenant_cleanup(django_db_blocker):
 
 
 @pytest.fixture
-def tenant(request, _tenant_impl):
+def tenant(request: Any, _tenant_impl: Any) -> Any:
     """
     Pytest fixture providing a tenant instance with activated schema.
 
@@ -326,7 +329,7 @@ def tenant(request, _tenant_impl):
 
 
 @pytest.fixture
-def tenant_domain(tenant):
+def tenant_domain(tenant: Any) -> Any:
     """
     Pytest fixture providing the domain instance for the test tenant.
 
@@ -344,7 +347,7 @@ def tenant_domain(tenant):
 
 
 @pytest.fixture
-def tenant_client(request, tenant):
+def tenant_client(request: Any, tenant: Any) -> Any:
     """
     Pytest fixture providing a tenant-aware test client.
 
