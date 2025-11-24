@@ -83,3 +83,8 @@ include = [
 "*" = [ "*.pyc", "*.pyo" ]
 
 [tool.setuptools.data-files]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "dts_test_project.dts_test_project.settings"
+pythonpath = ["."]
+testpaths = ["django_tenants/tests"]
