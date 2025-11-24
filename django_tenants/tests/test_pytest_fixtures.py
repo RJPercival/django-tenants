@@ -10,8 +10,10 @@ from django.db import connection
 
 from django_tenants.utils import get_tenant_model, get_tenant_domain_model
 
-# Mark all tests in this file to use pytest
-pytestmark = pytest.mark.django_db(transaction=True, databases='__all__')
+# Mark all tests in this file to use pytest with transaction=False
+# This matches TransactionTestCase behavior and avoids foreign key constraint issues
+# during database flushing with multi-database setups
+pytestmark = pytest.mark.django_db(transaction=False, databases='__all__')
 
 
 class TestTenantFixtureBasic:

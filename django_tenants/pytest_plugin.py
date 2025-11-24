@@ -168,6 +168,7 @@ def _cleanup_tenant_and_domain(tenant, domain, domain_name):
     _remove_domain_from_allowed_hosts(domain_name)
 
 
+
 @pytest.fixture
 def _tenant_impl(
     request,
@@ -177,18 +178,29 @@ def _tenant_impl(
     tenant_domain_name
 ):
     """
-    Internal implementation of tenant fixture with dynamic scope.
+    Internal implementation of tenant fixture.
 
     This fixture handles the creation, activation, and cleanup of test tenants.
-    The scope is determined by the @pytest.mark.tenant(scope='...') marker.
+    While the fixture itself is always function-scoped (so it runs for every test),
+    it simulates session/class scoping by maintaining a registry of tenants.
+
+    When a test requests a session/class-scoped tenant (via @pytest.mark.tenant(scope=...)),
+    this fixture checks the registry and reuses an existing tenant if one matches
+    the configuration. For function-scoped tenants, a new tenant is created for
+    each test and cleaned up immediately after.
+
+    Session and class-scoped tenants remain in the registry and are cleaned up at
+    session end by the _tenant_cleanup fixture, NOT at their declared scope boundaries.
+    This is a limitation of the current implementation but works correctly for most
+    use cases.
     """
     from django.db import connection
-    from django_tenants.utils import get_tenant_model
+    from django_tenants.utils import get_tenant_model, get_tenant_domain_model
 
     # Get configuration from marker
     marker_config = _get_tenant_marker_config(request)
-    schema_name = marker_config.get('schema_name', tenant_schema_name)
-    domain_name = marker_config.get('domain', tenant_domain_name)
+    schema_name = marker_config.get('schema_name') or tenant_schema_name
+    domain_name = marker_config.get('domain') or tenant_domain_name
     scope = _get_effective_scope(request)
 
     # Create a unique key for this tenant configuration
@@ -222,8 +234,9 @@ def _tenant_impl(
 
     # Cleanup function
     def cleanup():
-        # Only cleanup for function scope
-        # Session/class scope tenants are cleaned up by _tenant_cleanup fixture
+        # Only function-scoped tenants are cleaned up immediately.
+        # Session and class-scoped tenants remain in the registry for reuse
+        # and are cleaned up at session end via the _tenant_cleanup fixture.
         if scope == 'function':
             with django_db_blocker.unblock():
                 _cleanup_tenant_and_domain(tenant, domain, domain_name)
@@ -234,7 +247,7 @@ def _tenant_impl(
 
 
 @pytest.fixture(scope='session', autouse=True)
-def _tenant_cleanup():
+def _tenant_cleanup(django_db_blocker):
     """
     Session-scoped fixture to clean up all session/class-scoped tenants.
 
@@ -244,14 +257,21 @@ def _tenant_cleanup():
     yield
 
     # Cleanup all registered tenants
-    from django_tenants.utils import get_tenant_domain_model
+    # Use django_db_blocker to ensure database access is allowed during cleanup
+    with django_db_blocker.unblock():
+        from django_tenants.utils import get_tenant_domain_model
 
-    for (scope, schema_name, domain_name), tenant in _tenant_registry.items():
-        domain_model = get_tenant_domain_model()
-        domain = domain_model.objects.filter(tenant=tenant).first()
-        _cleanup_tenant_and_domain(tenant, domain, domain_name)
+        for (scope, schema_name, domain_name), tenant in _tenant_registry.items():
+            try:
+                domain_model = get_tenant_domain_model()
+                domain = domain_model.objects.filter(tenant=tenant).first()
+                _cleanup_tenant_and_domain(tenant, domain, domain_name)
+            except Exception:
+                # Ignore cleanup errors at session teardown
+                # (database might already be torn down)
+                pass
 
-    _tenant_registry.clear()
+        _tenant_registry.clear()
 
 
 @pytest.fixture
