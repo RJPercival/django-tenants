@@ -14,16 +14,9 @@ Usage:
 """
 
 import pytest
-from django.conf import settings
-from django.core.management import call_command
-from django.db import connection
 
-from django_tenants.utils import (
-    get_tenant_model,
-    get_tenant_domain_model,
-    get_public_schema_name,
-)
-from django_tenants.test.client import TenantClient
+# Defer Django imports until fixtures are used to avoid Django setup issues
+# during pytest plugin loading
 
 
 # Registry to track created tenants for session/class scoped fixtures
@@ -107,6 +100,9 @@ def _get_effective_scope(request):
 
 def _sync_shared_schema():
     """Migrate the public/shared schema."""
+    from django.core.management import call_command
+    from django_tenants.utils import get_public_schema_name
+
     call_command(
         'migrate_schemas',
         schema_name=get_public_schema_name(),
@@ -117,12 +113,16 @@ def _sync_shared_schema():
 
 def _add_domain_to_allowed_hosts(domain):
     """Add domain to ALLOWED_HOSTS if not already present."""
+    from django.conf import settings
+
     if domain not in settings.ALLOWED_HOSTS:
         settings.ALLOWED_HOSTS += [domain]
 
 
 def _remove_domain_from_allowed_hosts(domain):
     """Remove domain from ALLOWED_HOSTS."""
+    from django.conf import settings
+
     if domain in settings.ALLOWED_HOSTS:
         settings.ALLOWED_HOSTS.remove(domain)
 
@@ -134,6 +134,8 @@ def _create_tenant_and_domain(schema_name, domain_name):
     Returns:
         tuple: (tenant, domain) instances
     """
+    from django_tenants.utils import get_tenant_model, get_tenant_domain_model
+
     # Sync shared apps first
     _sync_shared_schema()
 
@@ -180,6 +182,9 @@ def _tenant_impl(
     This fixture handles the creation, activation, and cleanup of test tenants.
     The scope is determined by the @pytest.mark.tenant(scope='...') marker.
     """
+    from django.db import connection
+    from django_tenants.utils import get_tenant_model
+
     # Get configuration from marker
     marker_config = _get_tenant_marker_config(request)
     schema_name = marker_config.get('schema_name', tenant_schema_name)
@@ -239,6 +244,8 @@ def _tenant_cleanup():
     yield
 
     # Cleanup all registered tenants
+    from django_tenants.utils import get_tenant_domain_model
+
     for (scope, schema_name, domain_name), tenant in _tenant_registry.items():
         domain_model = get_tenant_domain_model()
         domain = domain_model.objects.filter(tenant=tenant).first()
@@ -354,6 +361,8 @@ def tenant_client(request, tenant):
     Returns:
         Tenant-aware test client instance
     """
+    from django_tenants.test.client import TenantClient
+
     # Check for custom client fixture marker
     marker = request.node.get_closest_marker('tenant_client')
 
