@@ -77,13 +77,10 @@ Provides a tenant-aware test client:
 
 By default, this returns a ``TenantClient`` instance (wrapper around Django's test ``Client``).
 
-Fixture Scopes
-==============
+Fixture Scope
+=============
 
-Function Scope (Default)
--------------------------
-
-By default, the ``tenant`` fixture is function-scoped, meaning a fresh tenant is created for each test function:
+The ``tenant`` fixture is function-scoped, meaning a fresh tenant is created for each test function:
 
 .. code-block:: python
 
@@ -95,53 +92,7 @@ By default, the ``tenant`` fixture is function-scoped, meaning a fresh tenant is
         # Gets a different fresh tenant
         pass
 
-This is equivalent to ``TenantTestCase`` behavior - slowest but most isolated.
-
-Session Scope (Fast Tests)
----------------------------
-
-For faster tests (equivalent to ``FastTenantTestCase``), override the fixture to use session scope in your ``conftest.py``:
-
-.. code-block:: python
-
-    # conftest.py
-    import pytest
-
-    @pytest.fixture(scope='session')
-    def tenant(tenant):
-        """Override to use session scope for faster tests."""
-        return tenant
-
-Now the tenant will be created once and reused across all tests:
-
-.. code-block:: python
-
-    def test_one(tenant):
-        # Tenant created once and reused
-        pass
-
-    def test_two(tenant):
-        # Same tenant instance
-        pass
-
-.. note::
-
-   With session-scoped fixtures, data from previous tests may be visible. However,
-   pytest-django's transaction rollback still occurs between tests, so each test
-   gets a clean database state.
-
-Class Scope
------------
-
-For per-class tenants, override to class scope:
-
-.. code-block:: python
-
-    # conftest.py
-    @pytest.fixture(scope='class')
-    def tenant(tenant):
-        """Override to use class scope."""
-        return tenant
+This is equivalent to ``TenantTestCase`` behavior. Each test gets a completely isolated tenant with its own schema.
 
 Customization
 =============
@@ -189,11 +140,11 @@ You can have different configurations for different test directories by placing 
 .. code-block:: text
 
     tests/
-    ├── fast_tests/
-    │   ├── conftest.py  # Session-scoped fixture
+    ├── api_tests/
+    │   ├── conftest.py  # Custom schema/domain for API tests
     │   └── test_*.py
-    └── isolated_tests/
-        ├── conftest.py  # Function-scoped fixture (or no override)
+    └── integration_tests/
+        ├── conftest.py  # Different custom configuration
         └── test_*.py
 
 Custom Test Clients
@@ -271,6 +222,11 @@ From TenantTestCase
 From FastTenantTestCase
 ------------------------
 
+.. note::
+
+   The pytest fixtures currently don't support ``FastTenantTestCase``'s behavior of reusing
+   a tenant across multiple tests. Each test gets a fresh tenant (like ``TenantTestCase``).
+
 **Before:**
 
 .. code-block:: python
@@ -288,22 +244,16 @@ From FastTenantTestCase
 
 .. code-block:: python
 
-    # conftest.py
-    import pytest
-
-    @pytest.fixture(scope='session')
-    def tenant(tenant):
-        return tenant
-
-    # test file
     import pytest
 
     pytestmark = pytest.mark.django_db(transaction=False, databases='__all__')
 
     def test_one(tenant):
+        # Gets a fresh tenant
         pass
 
     def test_two(tenant):
+        # Gets a different fresh tenant
         pass
 
 Custom Setup Methods
@@ -349,12 +299,6 @@ Here's a complete example showing various pytest fixture features:
     # conftest.py
     import pytest
     from django_webtest import DjangoTestApp
-
-    # Use session scope for fast tests
-    @pytest.fixture(scope='session')
-    def tenant(tenant):
-        """Override to use session scope for speed."""
-        return tenant
 
     @pytest.fixture
     def tenant_schema_name():
@@ -404,16 +348,9 @@ Best Practices
 
 1. **Always use the correct marker**: Include ``@pytest.mark.django_db(transaction=False, databases='__all__')`` on all tests using tenant fixtures.
 
-2. **Choose the right scope**:
-   - Use function scope (default) for tests that need full isolation
-   - Use session scope for large test suites where speed is critical
-   - Use class scope if you need something in between
+2. **Override fixtures in conftest.py**: Keep customization centralized rather than scattered across test files.
 
-3. **Override fixtures in conftest.py**: Keep customization centralized rather than scattered across test files.
-
-4. **Use session scope sparingly**: Session-scoped tenants are fast but you should understand the trade-offs.
-
-5. **Organize by scope**: Consider organizing fast (session-scoped) and slow (function-scoped) tests into separate directories with different ``conftest.py`` files.
+3. **Organize tests by type**: Consider organizing different test types (e.g., API tests, integration tests) into separate directories with different ``conftest.py`` files for custom configurations.
 
 Troubleshooting
 ===============

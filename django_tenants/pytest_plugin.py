@@ -2,18 +2,12 @@
 Pytest plugin for django-tenants.
 
 This module provides pytest fixtures for testing Django applications that use
-django-tenants. It offers simple, pytest-idiomatic equivalents to TenantTestCase
-and FastTenantTestCase.
+django-tenants. It offers a simple, pytest-idiomatic equivalent to TenantTestCase.
 
 Usage:
     def test_something(tenant, tenant_client):
         response = tenant_client.get('/path/')
         assert response.status_code == 200
-
-    # For session-scoped tenant (like FastTenantTestCase), override in conftest.py:
-    @pytest.fixture(scope='session')
-    def tenant(tenant):
-        return tenant
 """
 
 from collections.abc import Iterator
@@ -93,13 +87,8 @@ def tenant(
     activates it for use in tests. The tenant is automatically cleaned up
     via transaction rollback after the test completes.
 
-    By default, this fixture is function-scoped (like TenantTestCase), meaning
-    a fresh tenant is created for each test function. For session-scoped behavior
-    (like FastTenantTestCase), override this fixture in your conftest.py:
-
-        @pytest.fixture(scope='session')
-        def tenant(tenant):
-            return tenant
+    This fixture is function-scoped (like TenantTestCase), meaning a fresh
+    tenant is created for each test function.
 
     Customization:
         Override helper fixtures in conftest.py to customize:

@@ -128,8 +128,8 @@ Running tests using ``TenantTestCase`` can start being a bottleneck once the num
 
 .. note::
 
-   pytest users can achieve the same speed improvement using session-scoped fixtures.
-   See :doc:`pytest` for details.
+   pytest fixtures currently don't support ``FastTenantTestCase``'s behavior of reusing
+   tenants across tests. See :doc:`pytest` for details on pytest fixture testing.
 
 .. code-block:: python
 
