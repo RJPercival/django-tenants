@@ -2,7 +2,7 @@
 Using pytest with django-tenants
 =============================
 
-Django-tenants provides pytest fixtures that offer equivalent functionality to ``TenantTestCase`` and ``FastTenantTestCase``, with a more pytest-idiomatic API.
+Django-tenants provides simple pytest fixtures that offer equivalent functionality to ``TenantTestCase`` and ``FastTenantTestCase``.
 
 Installation
 ============
@@ -45,6 +45,14 @@ The main fixture is ``tenant``, which creates a test tenant, runs migrations on 
 * ``transaction=False``: Tenant operations require actual database commits (like Django's ``TransactionTestCase``)
 * ``databases='__all__'``: Tenant operations affect all configured tenant databases
 
+**Note:** Cleanup is automatic! pytest-django's transaction rollback will:
+
+* Delete the tenant record
+* Delete the domain record
+* Drop the schema (PostgreSQL DDL is transactional)
+
+The ``settings`` fixture automatically restores ``ALLOWED_HOSTS``.
+
 The ``tenant_domain`` Fixture
 ------------------------------
 
@@ -72,12 +80,10 @@ By default, this returns a ``TenantClient`` instance (wrapper around Django's te
 Fixture Scopes
 ==============
 
-The tenant fixture supports different scopes to control the tenant lifecycle:
-
 Function Scope (Default)
 -------------------------
 
-Fresh tenant created for each test function. Slowest but most isolated:
+By default, the ``tenant`` fixture is function-scoped, meaning a fresh tenant is created for each test function:
 
 .. code-block:: python
 
@@ -89,74 +95,61 @@ Fresh tenant created for each test function. Slowest but most isolated:
         # Gets a different fresh tenant
         pass
 
-This is equivalent to ``TenantTestCase`` behavior.
+This is equivalent to ``TenantTestCase`` behavior - slowest but most isolated.
+
+Session Scope (Fast Tests)
+---------------------------
+
+For faster tests (equivalent to ``FastTenantTestCase``), override the fixture to use session scope in your ``conftest.py``:
+
+.. code-block:: python
+
+    # conftest.py
+    import pytest
+
+    @pytest.fixture(scope='session')
+    def tenant(tenant):
+        """Override to use session scope for faster tests."""
+        return tenant
+
+Now the tenant will be created once and reused across all tests:
+
+.. code-block:: python
+
+    def test_one(tenant):
+        # Tenant created once and reused
+        pass
+
+    def test_two(tenant):
+        # Same tenant instance
+        pass
+
+.. note::
+
+   With session-scoped fixtures, data from previous tests may be visible. However,
+   pytest-django's transaction rollback still occurs between tests, so each test
+   gets a clean database state.
 
 Class Scope
 -----------
 
-Tenant shared across all tests in a class:
+For per-class tenants, override to class scope:
 
 .. code-block:: python
 
-    @pytest.mark.tenant(scope='class')
-    class TestMyFeature:
-        def test_one(self, tenant):
-            # Tests in this class share the same tenant
-            pass
-
-        def test_two(self, tenant):
-            # Same tenant as test_one
-            pass
-
-Session Scope
--------------
-
-Tenant reused across the entire test session (fastest):
-
-.. code-block:: python
-
-    @pytest.mark.tenant(scope='session')
-    class TestFastSuite:
-        def test_one(self, tenant):
-            # Tenant created once and reused
-            pass
-
-        def test_two(self, tenant):
-            # Same tenant instance
-            pass
-
-This is equivalent to ``FastTenantTestCase`` behavior. The tenant schema is created once and reused, making tests much faster. However:
-
-* Data from previous tests may be visible (though transactions roll back between tests)
-* Tests are not fully encapsulated
+    # conftest.py
+    @pytest.fixture(scope='class')
+    def tenant(tenant):
+        """Override to use class scope."""
+        return tenant
 
 Customization
 =============
 
-Via Markers
------------
-
-Customize tenant properties using the ``@pytest.mark.tenant`` marker:
-
-.. code-block:: python
-
-    @pytest.mark.tenant(
-        scope='session',
-        schema_name='custom_schema',
-        domain='custom.test.com'
-    )
-    def test_custom(tenant):
-        assert tenant.schema_name == 'custom_schema'
-
-    @pytest.mark.tenant(schema_name='another', domain='another.test.com')
-    class TestAnother:
-        def test_something(self, tenant):
-            assert tenant.schema_name == 'another'
-
 Via Fixture Overrides
 ----------------------
 
-Override default fixtures in your ``conftest.py``:
+Override helper fixtures in your ``conftest.py`` to customize tenant properties:
 
 .. code-block:: python
 
@@ -165,18 +158,43 @@ Override default fixtures in your ``conftest.py``:
 
     @pytest.fixture
     def tenant_schema_name():
-        return 'my_default_schema'
+        """Customize the default schema name."""
+        return 'my_custom_schema'
 
     @pytest.fixture
     def tenant_domain_name():
-        return 'my-default.test.com'
+        """Customize the default domain."""
+        return 'my-tenant.example.com'
 
-    # For complex customization, override after creation
+Custom Tenant Setup
+-------------------
+
+Override the tenant fixture after creation to set additional fields:
+
+.. code-block:: python
+
+    # conftest.py
     @pytest.fixture
     def tenant(tenant):
+        """Customize tenant after creation."""
         tenant.custom_field = 'value'
         tenant.save()
         return tenant
+
+Per-Directory Configuration
+----------------------------
+
+You can have different configurations for different test directories by placing a ``conftest.py`` in each:
+
+.. code-block:: text
+
+    tests/
+    ├── fast_tests/
+    │   ├── conftest.py  # Session-scoped fixture
+    │   └── test_*.py
+    └── isolated_tests/
+        ├── conftest.py  # Function-scoped fixture (or no override)
+        └── test_*.py
 
 Custom Test Clients
 ====================
@@ -215,31 +233,6 @@ To use ``django-webtest``'s ``DjangoTestApp`` with tenant context, use the ``@py
         assert response.status == '200 OK'
 
 The fixture automatically detects the client type and wraps it with ``TenantDjangoTestApp``.
-
-Custom DjangoTestApp Subclasses
---------------------------------
-
-If you have a custom ``DjangoTestApp`` subclass, the fixture will wrap it automatically:
-
-.. code-block:: python
-
-    # conftest.py
-    from django_webtest import DjangoTestApp
-
-    class MyCustomApp(DjangoTestApp):
-        def __init__(self):
-            super().__init__()
-            # Your custom initialization
-
-    @pytest.fixture
-    def custom_app():
-        return MyCustomApp()
-
-    # test file
-    @pytest.mark.tenant_client('custom_app')
-    def test_with_custom_app(tenant_client):
-        # Your custom app is now tenant-aware
-        response = tenant_client.get('/path/')
 
 Migration from TestCase Classes
 ================================
@@ -286,28 +279,32 @@ From FastTenantTestCase
 
     class MyFastTest(FastTenantTestCase):
         def test_one(self):
-            # Schema reused
             pass
 
         def test_two(self):
-            # Same schema
             pass
 
 **After:**
 
 .. code-block:: python
 
+    # conftest.py
+    import pytest
+
+    @pytest.fixture(scope='session')
+    def tenant(tenant):
+        return tenant
+
+    # test file
     import pytest
 
     pytestmark = pytest.mark.django_db(transaction=False, databases='__all__')
 
-    @pytest.mark.tenant(scope='session')
-    class TestFast:
-        def test_one(self, tenant):
-            pass
+    def test_one(tenant):
+        pass
 
-        def test_two(self, tenant):
-            pass
+    def test_two(tenant):
+        pass
 
 Custom Setup Methods
 --------------------
@@ -353,14 +350,20 @@ Here's a complete example showing various pytest fixture features:
     import pytest
     from django_webtest import DjangoTestApp
 
+    # Use session scope for fast tests
+    @pytest.fixture(scope='session')
+    def tenant(tenant):
+        """Override to use session scope for speed."""
+        return tenant
+
     @pytest.fixture
     def tenant_schema_name():
-        \"\"\"Override default schema name for all tests.\"\"\"
+        """Customize default schema name."""
         return 'test_schema'
 
     @pytest.fixture
     def webtest_app():
-        \"\"\"Provide a django-webtest app for integration tests.\"\"\"
+        """Provide django-webtest app."""
         return DjangoTestApp()
 
 
@@ -371,57 +374,30 @@ Here's a complete example showing various pytest fixture features:
     pytestmark = pytest.mark.django_db(transaction=False, databases='__all__')
 
 
-    class TestBasicTenant:
-        \"\"\"Tests with function-scoped tenants (default).\"\"\"
-
-        def test_tenant_created(self, tenant):
-            assert tenant.schema_name == 'test_schema'
-
-        def test_tenant_domain(self, tenant_domain):
-            assert tenant_domain.domain == 'tenant.test.com'
+    def test_tenant_created(tenant):
+        """Verify tenant is created with correct properties."""
+        assert tenant.schema_name == 'test_schema'
+        assert tenant.pk is not None
 
 
-    @pytest.mark.tenant(scope='class', schema_name='shared')
-    class TestSharedTenant:
-        \"\"\"Tests sharing a tenant across the class.\"\"\"
-
-        def test_first(self, tenant):
-            assert tenant.schema_name == 'shared'
-
-        def test_second(self, tenant):
-            # Same tenant as test_first
-            assert tenant.schema_name == 'shared'
+    def test_tenant_domain(tenant_domain):
+        """Verify tenant has domain."""
+        assert tenant_domain.domain == 'tenant.test.com'
+        assert tenant_domain.pk is not None
 
 
-    @pytest.mark.tenant(scope='session')
-    class TestFastTenants:
-        \"\"\"Fast tests reusing tenant across session.\"\"\"
-
-        def test_one(self, tenant):
-            pass
-
-        def test_two(self, tenant):
-            pass
-
-
-    @pytest.mark.tenant(schema_name='custom', domain='custom.test.com')
-    def test_custom_tenant(tenant, tenant_domain):
-        \"\"\"Test with custom tenant configuration.\"\"\"
-        assert tenant.schema_name == 'custom'
-        assert tenant_domain.domain == 'custom.test.com'
+    def test_with_client(tenant_client):
+        """Test using default TenantClient."""
+        response = tenant_client.get('/api/users/')
+        assert response.status_code == 200
 
 
     @pytest.mark.tenant_client('webtest_app')
     def test_with_webtest(tenant_client):
-        \"\"\"Test using django-webtest integration.\"\"\"
+        """Test using django-webtest."""
         response = tenant_client.get('/')
         assert response.status == '200 OK'
 
-
-    def test_with_default_client(tenant_client):
-        \"\"\"Test using default TenantClient.\"\"\"
-        response = tenant_client.get('/api/users/')
-        assert response.status_code == 200
 
 Best Practices
 ==============
@@ -429,15 +405,15 @@ Best Practices
 1. **Always use the correct marker**: Include ``@pytest.mark.django_db(transaction=False, databases='__all__')`` on all tests using tenant fixtures.
 
 2. **Choose the right scope**:
-   - Use function scope for tests that need full isolation
-   - Use class scope for related tests that can share state
+   - Use function scope (default) for tests that need full isolation
    - Use session scope for large test suites where speed is critical
+   - Use class scope if you need something in between
 
-3. **Override fixtures in conftest.py**: Keep customization in ``conftest.py`` rather than using markers everywhere.
+3. **Override fixtures in conftest.py**: Keep customization centralized rather than scattered across test files.
 
-4. **Use session scope sparingly**: Session-scoped tenants are fast but less isolated. Use for stable, read-heavy tests.
+4. **Use session scope sparingly**: Session-scoped tenants are fast but you should understand the trade-offs.
 
-5. **Clean up properly**: The fixtures handle cleanup automatically, but if you create additional tenants in tests, clean them up manually.
+5. **Organize by scope**: Consider organizing fast (session-scoped) and slow (function-scoped) tests into separate directories with different ``conftest.py`` files.
 
 Troubleshooting
 ===============
@@ -462,10 +438,14 @@ Configure pytest to find your Django settings in ``pyproject.toml``:
     DJANGO_SETTINGS_MODULE = "your_project.settings"
     pythonpath = ["."]
 
-Session-scoped tenants not cleaned up
---------------------------------------
+Schema not cleaned up properly
+-------------------------------
 
-Session-scoped tenants are cleaned up at the end of the test session. If pytest crashes, you may need to manually drop test schemas.
+The fixture relies on pytest-django's transaction rollback to drop schemas. If you see orphaned schemas:
+
+1. Make sure ``transaction=False`` is set in your ``django_db`` marker
+2. Verify PostgreSQL DDL rollback is working (it should be transactional)
+3. Check that tests aren't committing transactions explicitly
 
 See Also
 ========
