@@ -231,16 +231,19 @@ def tenant_client(request: Any, tenant: Any) -> Any:
         custom_client = request.getfixturevalue(fixture_name)
 
         # Auto-detect client type and wrap appropriately
-        # Check if it's a DjangoTestApp (duck typing - has .get and .post methods)
-        if hasattr(custom_client, "get") and hasattr(custom_client, "app"):
-            # It's likely a DjangoTestApp
-            from django_tenants.test.webtest import TenantDjangoTestApp
+        try:
+            from django_webtest import DjangoTestApp
 
-            return TenantDjangoTestApp(custom_client, tenant)
-        else:
-            # For other clients, we can't easily wrap them
-            # Return as-is and let the user handle tenant context
-            return custom_client
+            if isinstance(custom_client, DjangoTestApp):
+                from django_tenants.test.webtest import TenantDjangoTestApp
+                return TenantDjangoTestApp(custom_client, tenant)
+        except ImportError:
+            # django-webtest not installed
+            pass
+
+        # For other clients, we can't easily wrap them
+        # Return as-is and let the user handle tenant context
+        return custom_client
 
     # Default: return TenantClient
     return TenantClient(tenant)
